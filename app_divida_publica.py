@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v3.0) - "Plano Profissional"
+Aplicativo Streamlit (v3.1) - "Plano Profissional"
 Analisa os datasets CSV brutos (e grandes) do Tesouro Transparente.
 
 Arquitetura:
@@ -8,6 +8,9 @@ Arquitetura:
     e `gastos_orcamento_2025.csv`.
 2.  Usa @st.cache_data para carregar os datasets pesados apenas uma vez.
 3.  Implementa filtros dinâmicos (interatividade "sofisticada").
+
+[v3.1 - CORREÇÃO]: Implementa limpeza de dados mais robusta para
+                   converter valores monetários (ex: "1.234,56") para números.
 """
 
 import streamlit as st
@@ -17,7 +20,7 @@ import matplotlib.ticker as ticker
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Análise Orçamentária do Brasil (v3.0)",
+    page_title="Análise Orçamentária do Brasil (v3.1)",
     page_icon="🇧🇷",
     layout="wide"
 )
@@ -34,17 +37,10 @@ def carregar_dados_gastos(caminho_csv):
         df = pd.read_csv(
             caminho_csv,
             sep=';',
-            encoding='latin1',
-            decimal=',',  # Define a vírgula como separador decimal
-            thousands='.' # Define o ponto como separador de milhar
+            encoding='latin1'
+            # Removemos decimal=',' e thousands='.' para fazer a limpeza manual
         )
         
-        # Limpar os dados de valor (converter de R$ 1.234,56 para 1234.56)
-        # Usamos .replace() para remover 'R$ ' e '.' dos milhares
-        # Usamos .str.replace() para trocar ',' por '.' (decimal)
-        # Usamos pd.to_numeric() para converter para número
-        
-        # Vamos usar a coluna 'ORÇAMENTO REALIZADO (R$)'
         # Renomear colunas para facilitar
         df = df.rename(columns={
             'NOME FUNÇÃO': 'Funcao',
@@ -54,8 +50,14 @@ def carregar_dados_gastos(caminho_csv):
             'ORÇAMENTO REALIZADO (R$)': 'Valor_Realizado'
         })
         
-        # Converte a coluna de valor para numérico.
-        # Erros 'coerce' transforma qualquer valor que não seja número em NaN (Nulo)
+        # --- Limpeza de Dados v3.1 (Mais Robusta) ---
+        # 1. Garante que a coluna é um texto (string)
+        df['Valor_Realizado'] = df['Valor_Realizado'].astype(str)
+        # 2. Remove os pontos de milhar (ex: '1.234.567,89' -> '1234567,89')
+        df['Valor_Realizado'] = df['Valor_Realizado'].str.replace('.', '', regex=False)
+        # 3. Substitui a vírgula do decimal por um ponto (ex: '1234567,89' -> '1234567.89')
+        df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(',', '.', regex=False)
+        # 4. Agora sim, converte para número
         df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
         
         # Remove linhas onde o valor não pôde ser convertido
@@ -83,9 +85,8 @@ def carregar_dados_divida(caminho_csv):
         df = pd.read_csv(
             caminho_csv,
             sep=';',
-            encoding='latin1',
-            decimal=',',
-            thousands='.'
+            encoding='latin1'
+            # Removemos decimal=',' e thousands='.' para fazer a limpeza manual
         )
         
         # Renomear colunas
@@ -99,8 +100,12 @@ def carregar_dados_divida(caminho_csv):
         df['Data'] = pd.to_datetime(df['Data'], format='%m/%Y')
         df['Ano'] = df['Data'].dt.year
         
-        # Converter 'Valor_Estoque' para numérico
+        # --- Limpeza de Dados v3.1 (Mais Robusta) ---
+        df['Valor_Estoque'] = df['Valor_Estoque'].astype(str)
+        df['Valor_Estoque'] = df['Valor_Estoque'].str.replace('.', '', regex=False)
+        df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(',', '.', regex=False)
         df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
+        
         df = df.dropna(subset=['Valor_Estoque'])
         
         colunas_uteis = ['Data', 'Ano', 'Tipo_Divida', 'Valor_Estoque']
@@ -114,7 +119,7 @@ def carregar_dados_divida(caminho_csv):
     except Exception as e:
         st.error(f"Erro ao carregar e limpar {caminho_csv}: {e}")
         return pd.DataFrame()
-
+# ... (O restante do código, incluindo Funções de Gráfico e Interface, é idêntico) ...
 # --- Funções de Gráfico ---
 
 def formatar_bilhoes(x, pos):
@@ -127,7 +132,7 @@ def formatar_trilhoes(x, pos):
 
 # --- Interface Principal ---
 
-st.title("Análise Orçamentária do Brasil (v3.0 - Pro)")
+st.title("Análise Orçamentária do Brasil (v3.1 - Pro)")
 st.markdown("Plataforma de análise dinâmica dos datasets brutos do Tesouro Transparente.")
 
 # Carrega os dados (com cache)

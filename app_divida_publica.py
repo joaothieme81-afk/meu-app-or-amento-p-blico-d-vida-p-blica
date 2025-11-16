@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v2.0) para análise da Dívida Pública e Gastos Públicos Federais.
+Aplicativo Streamlit (v2.1) para análise da Dívida Pública e Gastos Públicos Federais.
 
 O app se conecta diretamente aos datasets CSV do Tesouro Transparente,
 utiliza cache (@st.cache_data) para performance e estabilidade,
 e apresenta filtros dinâmicos para a análise dos dados.
+
+[v2.1 - CORREÇÃO]: Atualiza os endpoints (URLs) dos CSVs que mudaram no portal.
 """
 
 import streamlit as st
@@ -15,15 +17,15 @@ import numpy as np
 
 # Configuração da página
 st.set_page_config(
-    page_title="Análise Orçamentária do Brasil (v2.0)",
+    page_title="Análise Orçamentária do Brasil (v2.1)",
     page_icon="🇧🇷",
     layout="wide"
 )
 
 # --- FONTES DE DADOS (ENDPOINTS) ---
-# Links diretos para os datasets de CSV no portal do Tesouro
+# Links diretos para os datasets de CSV no portal do Tesouro (URLs v2.1 ATUALIZADAS)
 URL_GASTOS_FUNCAO = "https://www.tesourotransparente.gov.br/ckan/dataset/cofog-despesas-por-funcao-do-governo-central/resource/82a8d1f2-17f1-4861-8d4e-b21a8d0b0b8c/download/cofog-despesas-por-funcao-do-governo-central.csv"
-URL_DIVIDA_ESTOQUE = "https://www.tesourotransparente.gov.br/ckan/dataset/estoque-da-divida-publica-federal/resource/11cff78e-f163-441a-9694-c7820a8d8e6a/download/estoque-da-divida-publica-federal.csv"
+URL_DIVIDA_ESTOQUE = "https://www.tesourotransparente.gov.br/ckan/dataset/estoque-da-divida-publica-federal/resource/30a858f7-66a9-4a4a-867c-d47f96d0b307/download/estoque-da-divida-publica-federal.csv"
 URL_DIVIDA_DETENTORES = "https://www.tesourotransparente.gov.br/ckan/dataset/detentores-da-divida-publica-mobiliaria-federal-interna/resource/1359c104-a60d-45f8-8f81-28b3c1d4dc5a/download/detentores-da-divida-publica-mobiliaria-federal-interna.csv"
 
 # --- FUNÇÕES DE CARREGAMENTO E CACHE ---
@@ -179,7 +181,7 @@ def criar_grafico_detentores(df_filtrado):
 
 # --- INTERFACE PRINCIPAL DO APLICATIVO ---
 
-st.title("Análise da Dívida e Gastos Públicos no Brasil (v2.0)")
+st.title("Análise da Dívida e Gastos Públicos no Brasil (v2.1)")
 st.markdown("""
 Este aplicativo se conecta aos Dados Abertos do **Tesouro Transparente**
 para analisar o Orçamento Federal e a Dívida Pública.

@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v4.0) - "Plano Profissional (IA)"
-Analisa os datasets CSV brutos (e grandes) do Tesouro Transparente.
+Aplicativo Streamlit (v4.1) - "Plano Profissional (IA)"
+Analisa os datasets CSV OTINIZADOS do Tesouro Transparente.
 
 Arquitetura:
 1.  Lê os arquivos CSV locais (versionados no GitHub).
 2.  Usa @st.cache_data para carregar os datasets pesados apenas uma vez.
 3.  Implementa filtros dinâmicos (Aba 1 e 2).
-4.  [NOVO] Implementa um Agente de IA (Gemini + pandas-ai) para 
+4.  Implementa um Agente de IA (Gemini + pandas-ai) para 
     responder perguntas em linguagem natural (Aba 3).
+    
+[v4.1 - CORREÇÃO]: Altera o encoding para 'utf-8' para ler os
+                   arquivos CSV otimizados pelo usuário.
 """
 
 import streamlit as st
@@ -22,36 +25,33 @@ from pandasai.llm import GoogleGemini
 
 # --- Configuração da Página ---
 st.set_page_config(
-    page_title="Análise Orçamentária do Brasil (v4.0 - IA)",
+    page_title="Análise Orçamentária do Brasil (v4.1 - IA)",
     page_icon="🇧🇷",
     layout="wide"
 )
 
-# --- Funções de Limpeza e Carregamento de Dados (as mesmas do v3.2) ---
+# --- Funções de Limpeza e Carregamento de Dados ---
 
 @st.cache_data
 def carregar_dados_gastos(caminho_csv):
-    """
-    Carrega o CSV de Orçamento de Despesa.
-    Este é um arquivo grande, então o cache é essencial.
-    """
+    """Carrega o CSV de Orçamento de Despesa OTINIZADO."""
     try:
+        # CORREÇÃO v4.1: Trocado 'latin1' por 'utf-8'
         df = pd.read_csv(
             caminho_csv,
             sep=';',
-            encoding='latin1'
+            encoding='utf-8' 
         )
         
         # Renomear colunas para facilitar
         df = df.rename(columns={
             'NOME FUNÇÃO': 'Funcao',
             'NOME ÓRGÃO SUPERIOR': 'Orgao_Superior',
-            'NOME ÓRGÃO SUBORDINADO': 'Orgao_Subordinado',
             'NOME UNIDADE ORÇAMENTÁRIA': 'Unidade_Orcamentaria',
             'ORÇAMENTO REALIZADO (R$)': 'Valor_Realizado'
         })
         
-        # Limpeza de Dados v3.1 (Mais Robusta)
+        # --- Limpeza de Dados v3.1 (Mais Robusta) ---
         df['Valor_Realizado'] = df['Valor_Realizado'].astype(str)
         df['Valor_Realizado'] = df['Valor_Realizado'].str.replace('.', '', regex=False)
         df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(',', '.', regex=False)
@@ -59,8 +59,10 @@ def carregar_dados_gastos(caminho_csv):
         
         df = df.dropna(subset=['Valor_Realizado'])
         
-        colunas_uteis = ['Funcao', 'Orgao_Superior', 'Orgao_Subordinado', 'Unidade_Orcamentaria', 'Valor_Realizado']
-        df_limpo = df[colunas_uteis]
+        # Seleciona apenas as colunas que vamos usar
+        colunas_uteis = ['Funcao', 'Orgao_Superior', 'Unidade_Orcamentaria', 'Valor_Realizado']
+        colunas_presentes = [col for col in colunas_uteis if col in df.columns]
+        df_limpo = df[colunas_presentes]
         
         return df_limpo
 
@@ -73,14 +75,13 @@ def carregar_dados_gastos(caminho_csv):
 
 @st.cache_data
 def carregar_dados_divida(caminho_csv):
-    """
-    Carrega o CSV histórico do Estoque da Dívida.
-    """
+    """Carrega o CSV histórico do Estoque da Dívida OTINIZADO."""
     try:
+        # CORREÇÃO v4.1: Trocado 'latin1' por 'utf-8'
         df = pd.read_csv(
             caminho_csv,
             sep=';',
-            encoding='latin1'
+            encoding='utf-8'
         )
         
         # Renomear colunas
@@ -91,19 +92,24 @@ def carregar_dados_divida(caminho_csv):
         })
         
         # Converter 'Data' para um formato datetime
-        df['Data'] = pd.to_datetime(df['Data'], format='%m/%Y')
+        try:
+            df['Data'] = pd.to_datetime(df['Data'], format='%m/%Y')
+        except ValueError:
+             df['Data'] = pd.to_datetime(df['Data'], format='%m/%Y', errors='coerce')
+
         df['Ano'] = df['Data'].dt.year
         
-        # Limpeza de Dados v3.1 (Mais Robusta)
+        # --- Limpeza de Dados v3.1 (Mais Robusta) ---
         df['Valor_Estoque'] = df['Valor_Estoque'].astype(str)
         df['Valor_Estoque'] = df['Valor_Estoque'].str.replace('.', '', regex=False)
         df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(',', '.', regex=False)
         df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
         
-        df = df.dropna(subset=['Valor_Estoque'])
+        df = df.dropna(subset=['Valor_Estoque', 'Data'])
         
         colunas_uteis = ['Data', 'Ano', 'Tipo_Divida', 'Valor_Estoque']
-        df_limpo = df[colunas_uteis]
+        colunas_presentes = [col for col in colunas_uteis if col in df.columns]
+        df_limpo = df[colunas_presentes]
         
         return df_limpo
         
@@ -114,7 +120,7 @@ def carregar_dados_divida(caminho_csv):
         st.error(f"Erro ao carregar e limpar {caminho_csv}: {e}")
         return pd.DataFrame()
 
-# --- Funções de Gráfico (Idênticas ao v3.2) ---
+# --- Funções de Gráfico ---
 
 def formatar_bilhoes(x, pos):
     """Formata o eixo Y para 'R$ 100 bi'."""
@@ -124,11 +130,12 @@ def formatar_trilhoes(x, pos):
     """Formata o eixo Y para 'R$ 1.5 T'."""
     return f'R$ {x*1e-12:.1f} T'
 
-# (As funções de criar_grafico_... são complexas e idênticas ao v3.2,
-#  portanto, omitidas aqui para brevidade, mas elas estão no código final)
-
-# --- [INÍCIO] Funções de Gráfico (copiadas do v3.2) ---
 def criar_grafico_gastos(df_filtrado):
+    # Assegura que a coluna existe antes de agrupar
+    if 'Funcao' not in df_filtrado.columns:
+        st.error("Coluna 'Funcao' não encontrada nos dados de gastos otimizados.")
+        return plt.figure()
+    
     df_plot = df_filtrado.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=True)
     fig, ax = plt.subplots(figsize=(10, len(df_plot) * 0.5))
     bars = ax.barh(df_plot.index, df_plot.values, color='#0072B2')
@@ -148,7 +155,11 @@ def criar_grafico_gastos(df_filtrado):
     return fig
 
 def criar_grafico_evolucao_divida(df_filtrado):
-    df_plot = df_divida_filtrado.groupby('Data')['Valor_Estoque'].sum()
+    if 'Data' not in df_filtrado.columns or 'Valor_Estoque' not in df_filtrado.columns:
+        st.error("Colunas 'Data' ou 'Valor_Estoque' não encontradas nos dados da dívida otimizados.")
+        return plt.figure()
+        
+    df_plot = df_filtrado.groupby('Data')['Valor_Estoque'].sum()
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(df_plot_divida.index, df_plot_divida.values, color='#D55E00')
     ax.set_title('Evolução do Estoque da Dívida Pública Federal', fontsize=16)
@@ -157,21 +168,21 @@ def criar_grafico_evolucao_divida(df_filtrado):
     ax.grid(True, linestyle='--', alpha=0.7)
     plt.tight_layout()
     return fig
-# --- [FIM] Funções de Gráfico ---
 
 # --- INTERFACE PRINCIPAL DO APLICATIVO ---
 
-st.title("Análise Orçamentária do Brasil (v4.0 - IA)")
-st.markdown("Plataforma de análise de dados com IA (Gemini) sobre os datasets brutos do Tesouro Transparente.")
+st.title("Análise Orçamentária do Brasil (v4.1 - IA)")
+st.markdown("Plataforma de análise de dados com IA (Gemini) sobre os datasets brutos (otimizados) do Tesouro Transparente.")
 
 # --- CARREGAMENTO DOS DADOS ---
-with st.spinner("Carregando datasets brutos... (Pode levar um minuto na primeira carga)"):
+with st.spinner("Carregando datasets otimizados..."):
+    # Nome dos arquivos CSV otimizados que você subiu
     df_gastos = carregar_dados_gastos("gastos_orcamento_2025.csv")
     df_divida = carregar_dados_divida("divida_estoque_historico.csv")
 
 # Verifica se os dados foram carregados antes de continuar
 if df_gastos.empty or df_divida.empty:
-    st.error("Falha ao carregar um ou mais datasets. Verifique os arquivos no GitHub.")
+    st.error("Falha ao carregar um ou mais datasets. Verifique se os arquivos CSV otimizados ('gastos_orcamento_2025.csv' e 'divida_estoque_historico.csv') estão no GitHub.")
 else:
     # --- Abas Principais ---
     tab1, tab2, tab3 = st.tabs([
@@ -180,7 +191,7 @@ else:
         "🤖 Chat com IA (Gemini)"
     ])
 
-    # --- ABA 1 E 2 (Idênticas ao v3.2) ---
+    # --- ABA 1: ANÁLISE DE GASTOS (PROFUNDIDADE) ---
     with tab1:
         st.header("Análise de Profundidade: Orçamento de Gastos 2025")
         st.markdown("Use os filtros para explorar o orçamento de despesas realizado em 2025.")
@@ -224,6 +235,7 @@ else:
         with st.expander("Ver dados brutos (filtrados)"):
             st.dataframe(df_gastos_filtrado)
 
+    # --- ABA 2: ANÁLISE DA DÍVIDA (AMPLITUDE) ---
     with tab2:
         st.header("Análise de Amplitude: Dívida Pública (Histórico)")
         st.markdown("Use os filtros para explorar o histórico da Dívida Pública Federal.")
@@ -340,8 +352,8 @@ st.sidebar.title("Sobre o Aplicativo")
 st.sidebar.info(f"""
 Este aplicativo é uma ferramenta de análise de dados para o Orçamento Federal e a Dívida Pública do Brasil.
 
-**Arquitetura de Dados (v4.0):**
-1.  Lê os datasets CSV brutos (`divida_estoque_historico.csv` e `gastos_orcamento_2025.csv`) versionados no GitHub.
+**Arquitetura de Dados (v4.1):**
+1.  Lê os datasets CSV **otimizados** (`divida_estoque_historico.csv` e `gastos_orcamento_2025.csv`) versionados no GitHub.
 2.  Usa `@st.cache_data` para carregar os dados em memória.
 3.  Aba 1 e 2: Filtros dinâmicos (Pandas)
 4.  Aba 3: Chat em linguagem natural (PandasAI + Google Gemini).

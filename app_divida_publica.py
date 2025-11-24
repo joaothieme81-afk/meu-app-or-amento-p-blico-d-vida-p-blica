@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v6.1 - Finalíssimo)
+Aplicativo Streamlit 
 Correção robusta de leitura de arquivos (UTF-8 e Latin-1)
 """
 
@@ -294,3 +294,4 @@ if not df_gastos.empty and not df_divida.empty:
 
 else:
     st.error("Erro crítico: Verifique os arquivos CSV no GitHub.")
+

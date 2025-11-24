@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v8.0 - Versão Final Otimizada)
-- Texto explicativo sobre o conceito de Dívida Bruta/Ampliada.
-- Cálculo de Sustentabilidade baseado no fluxo real de pagamento (Encargos).
+Aplicativo Streamlit (v8.1 - Finalíssimo)
+Correção visual do texto de aviso (fonte e espaçamento).
 """
 
 import streamlit as st
@@ -137,12 +136,8 @@ A Regra de Pareto (80/20) aplicada aqui demonstra a **rigidez orçamentária**: 
 """
 
         elif "Previsão de Pagamento" in pergunta:
-            # 1. Pega o Estoque Total da Dívida (Conceito Ampliado)
             data_max = df_divida['Data'].max()
             divida_total = df_divida[df_divida['Data'] == data_max]['Valor_Estoque'].sum()
-            
-            # 2. Pega o valor anual gasto SÓ com a Dívida ("Encargos Especiais")
-            # Isso simula o esforço de pagamento atual
             gasto_divida_anual = df_gastos[df_gastos['Funcao'].str.contains("Encargos", case=False, na=False)]['Valor_Realizado'].sum()
             
             if gasto_divida_anual > 0:
@@ -166,21 +161,14 @@ Este cenário hipotético considera que:
             else:
                 return "Não foi possível identificar os gastos com 'Encargos Especiais' para o cálculo."
 
-        elif "Interna vs Externa" in pergunta:
-            data_max = df_divida['Data'].max()
-            df_rec = df_divida[df_divida['Data'] == data_max]
-            
-            if 'Tipo_Divida' in df_rec.columns:
-                df_rank = df_rec.groupby('Tipo_Divida')['Valor_Estoque'].sum().sort_values(ascending=False)
-                total = df_rank.sum()
-                
-                res = f"### 🏦 Composição da Dívida ({data_max.strftime('%m/%Y')})\n"
-                for t, v in df_rank.items():
-                    p = (v/total)*100
-                    res += f"- **{t}**: R$ {v*1e-9:.0f} bi ({p:.1f}%)\n"
-                return res
-            else:
-                return "Coluna 'Tipo de Dívida' não encontrada."
+        elif "Listagem dos Gastos" in pergunta:
+            df_rank = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
+            total = df_rank.sum()
+            res = "### 📋 Ranking de Gastos (Maior para Menor)\n"
+            for f, v in df_rank.items():
+                p = (v/total)*100
+                if p > 0.1: res += f"1. **{f}**: R$ {v*1e-9:.1f} bi ({p:.1f}%)\n"
+            return res
 
         return "Selecione..."
     except Exception as e: return f"Erro: {e}"
@@ -233,14 +221,14 @@ if not df_gastos.empty and not df_divida.empty:
     with tab2:
         st.header("Evolução da Dívida Pública")
         
-        # NOVO TEXTO EXPLICATIVO (Fiel ao que você pediu)
+        # TEXTO CORRIGIDO (SEM INDENTAÇÃO)
         st.warning("""
-        ⚠️ **Nota Metodológica:** Os valores deste gráfico representam o **estoque total** da dívida pública federal conforme registrado na base utilizada, 
-        que segue um conceito mais amplo do que a Dívida Pública Federal (DPF) “em mercado”. 
-        Enquanto a DPF divulgada na mídia costuma variar entre **R$ 6–8 trilhões**, o estoque mostrado aqui inclui outros componentes e modalidades de títulos, 
-        aproximando-se das medidas ampliadas ou da dívida bruta, o que leva a valores na faixa de **R$ 10–11 trilhões**.
-        A base também distingue dívida interna (títulos em reais) e dívida externa (em moeda estrangeira), mas o gráfico exibe o total agregado de ambas.
-        """)
+⚠️ **Nota Metodológica:** Os valores deste gráfico representam o **estoque total** da dívida pública federal conforme registrado na base utilizada, 
+que segue um conceito mais amplo do que a Dívida Pública Federal (DPF) “em mercado”. 
+Enquanto a DPF divulgada na mídia costuma variar entre **R$ 6–8 trilhões**, o estoque mostrado aqui inclui outros componentes e modalidades de títulos, 
+aproximando-se das medidas ampliadas ou da dívida bruta, o que leva a valores na faixa de **R$ 10–11 trilhões**.
+A base também distingue dívida interna (títulos em reais) e dívida externa (em moeda estrangeira), mas o gráfico exibe o total agregado de ambas.
+""")
         
         if 'Data' in df_divida.columns:
             df_divida = df_divida.sort_values(by='Data')
@@ -267,12 +255,11 @@ if not df_gastos.empty and not df_divida.empty:
 
     with tab3:
         st.header("Inteligência")
-        # MENU ATUALIZADO (Sem Listagem de Gastos, Com Previsão de Pagamento)
         op = st.selectbox("Análise:", [
             "Selecione...", 
             "📉 Análise de Concentração (Regra de Pareto)", 
-            "⏳ Previsão de Pagamento (Cenário Estável)",
-            "🏦 Dívida Interna vs Externa"
+            "⏳ Previsão de Pagamento (Cenário Estável)", 
+            "📋 Listagem dos Gastos (Maior para Menor)"
         ])
         
         if op != "Selecione...":
@@ -281,6 +268,7 @@ if not df_gastos.empty and not df_divida.empty:
 
 else:
     st.error("Erro: Arquivos CSV não carregados.")
+
 
 
 

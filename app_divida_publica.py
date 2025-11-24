@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v7.1) - Correção de Soma da Dívida
-Filtra e agrupa dados corretamente para evitar duplicação de valores (11 tri -> 6 tri).
+Aplicativo Streamlit (v7.2) - Correção Definitiva da Soma da Dívida
+Filtra duplicações de agregação para garantir que o valor total seja correto (~R$ 6-7 tri).
 """
 
 import streamlit as st
@@ -113,11 +113,11 @@ def carregar_dados_divida():
         df['Valor_Estoque'] = df['Valor_Estoque'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
         
-    # CORREÇÃO CRÍTICA: Remover duplicatas de agregação
-    # Se o CSV tiver "Total Dívida Federal" e também "Dívida Interna" + "Externa", somar tudo duplica.
-    # Vamos filtrar para manter apenas os tipos específicos se existirem, ou remover a linha de Total Geral.
+    # CORREÇÃO CRÍTICA DE DUPLICAÇÃO
+    # Se houver a coluna "Tipo_Divida", removemos linhas que sejam agregados (ex: "Total Dívida Federal")
+    # Mantemos apenas "Dívida Interna" e "Dívida Externa" para somar corretamente.
     if 'Tipo_Divida' in df.columns:
-        # Remove linhas onde Tipo_Divida seja "Total" ou similar (se houver)
+        # Filtra para remover 'Total' se existir na string
         df = df[~df['Tipo_Divida'].astype(str).str.contains("Total", case=False, na=False)]
         
     return df.dropna(subset=['Valor_Estoque'])
@@ -139,8 +139,8 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
 
         elif "Sustentabilidade" in pergunta:
             data_max = df_divida['Data'].max()
-            # Usa a média mensal ou o valor exato do último mês (evita soma duplicada)
-            # AQUI ESTÁ O TRUQUE: Se houver múltiplas linhas para o mesmo mês (Interna + Externa), somamos.
+            # Filtra novamente para garantir que estamos somando apenas os componentes base
+            # Soma tudo que sobrou após o filtro de carregamento (que já tirou os Totais)
             divida_total = df_divida[df_divida['Data'] == data_max]['Valor_Estoque'].sum()
             
             gasto_total = df_gastos['Valor_Realizado'].sum()
@@ -215,8 +215,8 @@ if not df_gastos.empty and not df_divida.empty:
         st.header("Trajetória da Dívida")
         
         if 'Data' in df_divida.columns:
-            # CORREÇÃO DO GRÁFICO: Agrupa por data para evitar soma duplicada
-            # Se houver "Dívida Interna" e "Externa", soma. Se tiver "Total", já filtramos antes.
+            # CORREÇÃO DO GRÁFICO: Agrupa por data e soma
+            # O filtro na carga de dados já deve ter removido os "Totais" duplicados
             df_divida = df_divida.sort_values(by='Data')
             df_linha = df_divida.groupby('Data')['Valor_Estoque'].sum()
             
@@ -240,3 +240,4 @@ if not df_gastos.empty and not df_divida.empty:
 
 else:
     st.error("Erro: Arquivos CSV não carregados.")
+

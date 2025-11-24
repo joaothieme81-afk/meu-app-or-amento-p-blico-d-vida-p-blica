@@ -224,10 +224,7 @@ if not df_gastos.empty and not df_divida.empty:
         # TEXTO CORRIGIDO (SEM INDENTAÇÃO)
         st.warning("""
 ⚠️ **Nota Metodológica:** Os valores deste gráfico representam o **estoque total** da dívida pública federal conforme registrado na base utilizada, 
-que segue um conceito mais amplo do que a Dívida Pública Federal (DPF) “em mercado”. 
-Enquanto a DPF divulgada na mídia costuma variar entre **R$ 6–8 trilhões**, o estoque mostrado aqui inclui outros componentes e modalidades de títulos, 
-aproximando-se das medidas ampliadas ou da dívida bruta, o que leva a valores na faixa de **R$ 10–11 trilhões**.
-A base também distingue dívida interna (títulos em reais) e dívida externa (em moeda estrangeira), mas o gráfico exibe o total agregado de ambas.
+que segue um conceito mais amplo do que a Dívida Pública Federal (DPF) “em mercado”. A base também distingue dívida interna (títulos em reais) e dívida externa (em moeda estrangeira), mas o gráfico exibe o total agregado de ambas.
 """)
         
         if 'Data' in df_divida.columns:
@@ -268,6 +265,7 @@ A base também distingue dívida interna (títulos em reais) e dívida externa (
 
 else:
     st.error("Erro: Arquivos CSV não carregados.")
+
 
 
 

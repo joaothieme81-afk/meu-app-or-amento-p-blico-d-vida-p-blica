@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v7.4) - Versão Final Ajustada
-- Gráfico da Dívida mantido (Conceito Ampliado).
-- Texto explicativo sobre os valores da dívida (~11 tri vs 6-8 tri).
-- Função de listagem de credores removida.
+Aplicativo Streamlit (v8.0 - Versão Final Otimizada)
+- Texto explicativo sobre o conceito de Dívida Bruta/Ampliada.
+- Cálculo de Sustentabilidade baseado no fluxo real de pagamento (Encargos).
 """
 
 import streamlit as st
@@ -109,9 +108,12 @@ def carregar_dados_divida():
         df['Valor_Estoque'] = df['Valor_Estoque'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
         
+    if 'Tipo_Divida' in df.columns:
+        df = df[~df['Tipo_Divida'].astype(str).str.contains("Total", case=False, na=False)]
+        
     return df.dropna(subset=['Valor_Estoque'])
 
-# --- 2. ANÁLISE ---
+# --- 2. ANÁLISE ESTATÍSTICA ---
 
 def gerar_insight_avancado(pergunta, df_gastos, df_divida):
     try:
@@ -134,22 +136,42 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
 A Regra de Pareto (80/20) aplicada aqui demonstra a **rigidez orçamentária**: a grande maioria dos recursos está comprometida com pouquíssimas áreas (principalmente Dívida e Previdência), deixando pouco espaço para investimentos discricionários em outros setores.
 """
 
-        elif "Listagem dos Gastos" in pergunta:
-            df_rank = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
-            total = df_rank.sum()
-            res = "### 📋 Ranking de Gastos (Maior para Menor)\n"
-            for f, v in df_rank.items():
-                p = (v/total)*100
-                if p > 0.1: res += f"1. **{f}**: R$ {v*1e-9:.1f} bi ({p:.1f}%)\n"
-            return res
+        elif "Previsão de Pagamento" in pergunta:
+            # 1. Pega o Estoque Total da Dívida (Conceito Ampliado)
+            data_max = df_divida['Data'].max()
+            divida_total = df_divida[df_divida['Data'] == data_max]['Valor_Estoque'].sum()
+            
+            # 2. Pega o valor anual gasto SÓ com a Dívida ("Encargos Especiais")
+            # Isso simula o esforço de pagamento atual
+            gasto_divida_anual = df_gastos[df_gastos['Funcao'].str.contains("Encargos", case=False, na=False)]['Valor_Realizado'].sum()
+            
+            if gasto_divida_anual > 0:
+                anos = divida_total / gasto_divida_anual
+                return f"""
+### ⏳ Estimativa de Quitação (Cenário Estável)
+Este cálculo estima quanto tempo levaria para quitar o estoque atual da dívida mantendo o nível atual de pagamentos e preservando os demais gastos sociais.
+
+- **Estoque da Dívida:** R$ {divida_total*1e-12:.2f} Trilhões
+- **Pagamento Anual Atual (Encargos):** R$ {gasto_divida_anual*1e-12:.2f} Trilhões
+
+**Resultado:** Levaria aproximadamente **{anos:.1f} anos** para zerar a dívida.
+
+---
+**⚠️ Premissas do Modelo:**
+Este cenário hipotético considera que:
+1. O estoque da dívida **pare de crescer** (novos juros zero).
+2. O governo **mantenha** o ritmo de pagamento atual (destinando a verba de Encargos para amortização).
+3. Os gastos com Saúde, Educação e outros **sejam preservados** (não usamos o orçamento total).
+"""
+            else:
+                return "Não foi possível identificar os gastos com 'Encargos Especiais' para o cálculo."
 
         elif "Interna vs Externa" in pergunta:
             data_max = df_divida['Data'].max()
             df_rec = df_divida[df_divida['Data'] == data_max]
             
             if 'Tipo_Divida' in df_rec.columns:
-                df_tipo = df_rec[~df_rec['Tipo_Divida'].astype(str).str.contains("Total", case=False, na=False)]
-                df_rank = df_tipo.groupby('Tipo_Divida')['Valor_Estoque'].sum().sort_values(ascending=False)
+                df_rank = df_rec.groupby('Tipo_Divida')['Valor_Estoque'].sum().sort_values(ascending=False)
                 total = df_rank.sum()
                 
                 res = f"### 🏦 Composição da Dívida ({data_max.strftime('%m/%Y')})\n"
@@ -163,13 +185,13 @@ A Regra de Pareto (80/20) aplicada aqui demonstra a **rigidez orçamentária**: 
         return "Selecione..."
     except Exception as e: return f"Erro: {e}"
 
-# --- 3. INTERFACE ---
+# --- 3. INTERFACE GRÁFICA ---
 
 def format_bi(x, pos): return f'R$ {x*1e-9:.0f} bi'
 def format_tri(x, pos): return f'R$ {x*1e-12:.1f} T'
 
 st.title("Análise Orçamentária do Brasil 🇧🇷")
-st.markdown("Dados oficiais do Tesouro Transparente.")
+st.markdown("Dados oficiais do Tesouro Transparente e Portal da Transparência.")
 
 with st.spinner("Carregando..."):
     df_gastos = carregar_dados_gastos()
@@ -177,7 +199,7 @@ with st.spinner("Carregando..."):
 
 if not df_gastos.empty and not df_divida.empty:
     
-    tab1, tab2, tab3 = st.tabs(["📊 Gastos", "📈 Dívida", "🧠 Análises"])
+    tab1, tab2, tab3 = st.tabs(["📊 Gastos (2025)", "📈 Dívida (Histórico)", "🧠 Análises"])
     
     with tab1:
         st.header("Raio-X dos Gastos")
@@ -211,23 +233,21 @@ if not df_gastos.empty and not df_divida.empty:
     with tab2:
         st.header("Evolução da Dívida Pública")
         
-        # NOVA EXPLICAÇÃO SOBRE OS VALORES
+        # NOVO TEXTO EXPLICATIVO (Fiel ao que você pediu)
         st.warning("""
-        ⚠️ **Atenção sobre os valores:** Os valores apresentados neste gráfico representam o estoque total da dívida pública federal conforme registrado na base utilizada, 
+        ⚠️ **Nota Metodológica:** Os valores deste gráfico representam o **estoque total** da dívida pública federal conforme registrado na base utilizada, 
         que segue um conceito mais amplo do que a Dívida Pública Federal (DPF) “em mercado”. 
-        Enquanto a DPF divulgada na mídia costuma variar entre R$ 6–8 trilhões, o estoque mostrado aqui inclui outros componentes e modalidades de títulos, 
-        aproximando-se das medidas ampliadas ou da dívida bruta, o que leva a valores na faixa de R$ 10–11 trilhões.
+        Enquanto a DPF divulgada na mídia costuma variar entre **R$ 6–8 trilhões**, o estoque mostrado aqui inclui outros componentes e modalidades de títulos, 
+        aproximando-se das medidas ampliadas ou da dívida bruta, o que leva a valores na faixa de **R$ 10–11 trilhões**.
         A base também distingue dívida interna (títulos em reais) e dívida externa (em moeda estrangeira), mas o gráfico exibe o total agregado de ambas.
         """)
         
         if 'Data' in df_divida.columns:
             df_divida = df_divida.sort_values(by='Data')
             
-            # Remove linhas de "Total" se houver, para somar Interna + Externa
             if 'Tipo_Divida' in df_divida.columns:
                  df_divida = df_divida[~df_divida['Tipo_Divida'].astype(str).str.contains("Total", case=False, na=False)]
 
-            # Agrupa por data para somar tudo daquele mês (Interna + Externa)
             df_linha = df_divida.groupby('Data')['Valor_Estoque'].sum()
             
             if not df_linha.empty:
@@ -241,19 +261,27 @@ if not df_gastos.empty and not df_divida.empty:
                 ult = df_linha.iloc[-1]
                 st.metric(f"Estoque Ampliado ({df_linha.index[-1].strftime('%m/%Y')})", f"R$ {ult*1e-12:.2f} Trilhões")
             else:
-                st.warning("Dados insuficientes para o gráfico.")
+                st.warning("Dados insuficientes.")
         else:
             st.error("Erro: Coluna de Data não identificada.")
 
     with tab3:
         st.header("Inteligência")
-        # REMOVIDO: Listagem de Credores e Sustentabilidade (que dependiam de valor exato da DPF Mercado)
-        op = st.selectbox("Análise:", ["Selecione...", "📉 Pareto (Concentração)", "📋 Ranking de Gastos", "🏦 Dívida Interna vs Externa"])
+        # MENU ATUALIZADO (Sem Listagem de Gastos, Com Previsão de Pagamento)
+        op = st.selectbox("Análise:", [
+            "Selecione...", 
+            "📉 Análise de Concentração (Regra de Pareto)", 
+            "⏳ Previsão de Pagamento (Cenário Estável)",
+            "🏦 Dívida Interna vs Externa"
+        ])
+        
         if op != "Selecione...":
+            st.markdown("---")
             st.markdown(gerar_insight_avancado(op, df_gastos, df_divida))
 
 else:
     st.error("Erro: Arquivos CSV não carregados.")
+
 
 
 

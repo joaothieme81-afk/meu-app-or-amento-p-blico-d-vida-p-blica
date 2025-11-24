@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v7.2) - Correção Definitiva da Soma da Dívida
-Filtra duplicações de agregação para garantir que o valor total seja correto (~R$ 6-7 tri).
+Aplicativo Streamlit (v7.3) - Ajuste Fino Final
+- Gráfico de Dívida separado por Tipo (Interna vs Externa) para evitar erro de soma.
+- Funcionalidades interativas focadas em Pareto e Rankings disponíveis.
 """
 
 import streamlit as st
@@ -53,7 +54,6 @@ def carregar_dados_gastos():
 
     df = normalizar_colunas(df)
     
-    # Mapeamento
     col_map = {
         'funcao': next((c for c in df.columns if 'funcao' in c and 'sub' not in c), None),
         'orgao_superior': next((c for c in df.columns if 'superior' in c), None),
@@ -68,7 +68,6 @@ def carregar_dados_gastos():
         col_map['valor']: 'Valor_Realizado'
     })
     
-    # Limpeza numérica
     if 'Valor_Realizado' in df.columns:
         df['Valor_Realizado'] = df['Valor_Realizado'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
@@ -91,38 +90,27 @@ def carregar_dados_divida():
     col_map = {
         'data': next((c for c in df.columns if 'mes' in c or 'data' in c), None),
         'valor': next((c for c in df.columns if 'valor' in c), None),
-        'tipo': next((c for c in df.columns if 'tipo' in c), None),
-        'detentor': next((c for c in df.columns if 'detentor' in c), None)
+        'tipo': next((c for c in df.columns if 'tipo' in c), None)
     }
     
     rename_dict = {col_map['data']: 'Data', col_map['valor']: 'Valor_Estoque'}
     if col_map['tipo']: rename_dict[col_map['tipo']] = 'Tipo_Divida'
-    if col_map['detentor']: rename_dict[col_map['detentor']] = 'Detentor'
     
     df = df.rename(columns=rename_dict)
     
-    # Tratamento Data
     if 'Data' in df.columns:
         df['Data'] = df['Data'].astype(str).str.strip()
         df['Data'] = df['Data'].apply(traduzir_data_pt_br)
         df = df.dropna(subset=['Data'])
         df['Ano'] = df['Data'].dt.year
 
-    # Limpeza Valor
     if 'Valor_Estoque' in df.columns:
         df['Valor_Estoque'] = df['Valor_Estoque'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
         df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
         
-    # CORREÇÃO CRÍTICA DE DUPLICAÇÃO
-    # Se houver a coluna "Tipo_Divida", removemos linhas que sejam agregados (ex: "Total Dívida Federal")
-    # Mantemos apenas "Dívida Interna" e "Dívida Externa" para somar corretamente.
-    if 'Tipo_Divida' in df.columns:
-        # Filtra para remover 'Total' se existir na string
-        df = df[~df['Tipo_Divida'].astype(str).str.contains("Total", case=False, na=False)]
-        
     return df.dropna(subset=['Valor_Estoque'])
 
-# --- 2. ANÁLISE ---
+# --- 2. CÉREBRO DE ANÁLISE ---
 
 def gerar_insight_avancado(pergunta, df_gastos, df_divida):
     try:
@@ -135,41 +123,42 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
             top_1 = df_f.index[0]
             top_1_perc = (df_f.iloc[0] / total) * 100
             
-            return f"### 📉 Pareto (Gastos)\n- **Resultado:** {n_80} funções concentram 80% do gasto.\n- **Maior:** {top_1} ({top_1_perc:.1f}%)."
+            return f"""
+### 📉 Análise de Concentração (Regra de Pareto)
+- **Resultado:** Apenas **{n_80} funções** concentram **80%** de todo o orçamento realizado.
+- **Maior Foco:** A função **{top_1}** sozinha representa **{top_1_perc:.1f}%** dos gastos.
 
-        elif "Sustentabilidade" in pergunta:
-            data_max = df_divida['Data'].max()
-            # Filtra novamente para garantir que estamos somando apenas os componentes base
-            # Soma tudo que sobrou após o filtro de carregamento (que já tirou os Totais)
-            divida_total = df_divida[df_divida['Data'] == data_max]['Valor_Estoque'].sum()
-            
-            gasto_total = df_gastos['Valor_Realizado'].sum()
-            razao = divida_total / gasto_total
-            
-            return f"### ⚖️ Sustentabilidade\n- **Dívida:** R$ {divida_total*1e-12:.2f} Tri\n- **Orçamento:** R$ {gasto_total*1e-12:.2f} Tri\n- **Índice:** A dívida é **{razao:.1f}x** o orçamento."
+---
+**💡 Entenda o Conceito:**
+A Regra de Pareto (80/20) aplicada aqui demonstra a **rigidez orçamentária**: a grande maioria dos recursos está comprometida com pouquíssimas áreas (principalmente Dívida e Previdência), deixando pouco espaço para investimentos discricionários em outros setores.
+"""
 
         elif "Listagem dos Gastos" in pergunta:
             df_rank = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
             total = df_rank.sum()
-            res = "### 📋 Ranking de Gastos\n"
+            res = "### 📋 Ranking de Gastos (Maior para Menor)\n"
             for f, v in df_rank.items():
                 p = (v/total)*100
-                if p > 0.5: res += f"1. **{f}**: R$ {v*1e-9:.1f} bi ({p:.1f}%)\n"
+                if p > 0.1: res += f"1. **{f}**: R$ {v*1e-9:.1f} bi ({p:.1f}%)\n"
             return res
 
-        elif "Listagem dos Credores" in pergunta:
+        elif "Interna vs Externa" in pergunta:
             data_max = df_divida['Data'].max()
             df_rec = df_divida[df_divida['Data'] == data_max]
             
-            col = 'Detentor' if 'Detentor' in df_rec.columns else 'Tipo_Divida'
-            df_rank = df_rec.groupby(col)['Valor_Estoque'].sum().sort_values(ascending=False)
-            total = df_rank.sum()
-            
-            res = f"### 🏦 Credores ({data_max.strftime('%m/%Y')})\n"
-            for c, v in df_rank.items():
-                p = (v/total)*100
-                res += f"1. **{c}**: {p:.1f}% (R$ {v*1e-9:.0f} bi)\n"
-            return res
+            if 'Tipo_Divida' in df_rec.columns:
+                # Remove "Total" para ver só a composição
+                df_tipo = df_rec[~df_rec['Tipo_Divida'].str.contains("Total", case=False, na=False)]
+                df_rank = df_tipo.groupby('Tipo_Divida')['Valor_Estoque'].sum().sort_values(ascending=False)
+                total = df_rank.sum()
+                
+                res = f"### 🏦 Composição da Dívida ({data_max.strftime('%m/%Y')})\n"
+                for t, v in df_rank.items():
+                    p = (v/total)*100
+                    res += f"- **{t}**: R$ {v*1e-9:.0f} bi ({p:.1f}%)\n"
+                return res
+            else:
+                return "Coluna 'Tipo de Dívida' não encontrada para essa análise."
 
         return "Selecione..."
     except Exception as e: return f"Erro: {e}"
@@ -192,15 +181,23 @@ if not df_gastos.empty and not df_divida.empty:
     
     with tab1:
         st.header("Raio-X dos Gastos")
-        st.info("ℹ️ **Nota:** 'Encargos Especiais' inclui o serviço da dívida.")
+        st.info("ℹ️ **Nota:** 'Encargos Especiais' inclui o serviço da dívida (amortização e juros).")
         
         col1, col2 = st.columns(2)
         if 'Funcao' in df_gastos.columns:
             funcoes = sorted(list(df_gastos['Funcao'].unique()))
             sel = col1.selectbox("Filtrar:", ['Todas'] + funcoes)
             
-            df_view = df_gastos if sel == 'Todas' else df_gastos[df_gastos['Funcao'] == sel]
-            group = 'Funcao' if sel == 'Todas' else 'Unidade_Orcamentaria'
+            if sel == 'Todas':
+                df_view = df_gastos
+                # Visão Macro: Agrupa por FUNÇÃO
+                group = 'Funcao'
+                title = "Top 10 Funções do Orçamento"
+            else:
+                df_view = df_gastos[df_gastos['Funcao'] == sel]
+                # Visão Micro: Agrupa por UNIDADE
+                group = 'Unidade_Orcamentaria'
+                title = f"Top 10 Unidades em {sel}"
             
             top = df_view.groupby(group)['Valor_Realizado'].sum().nlargest(10).sort_values(ascending=True)
             
@@ -208,36 +205,48 @@ if not df_gastos.empty and not df_divida.empty:
             ax.barh(top.index, top.values, color='#0072B2')
             ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_bi))
             ax.grid(axis='x', alpha=0.3)
+            ax.set_title(title)
             st.pyplot(fig)
-            with st.expander("Dados"): st.dataframe(df_view)
+            
+            with st.expander("Dados Detalhados"): st.dataframe(df_view)
 
     with tab2:
-        st.header("Trajetória da Dívida")
+        st.header("Evolução da Dívida Pública")
         
-        if 'Data' in df_divida.columns:
-            # CORREÇÃO DO GRÁFICO: Agrupa por data e soma
-            # O filtro na carga de dados já deve ter removido os "Totais" duplicados
+        if 'Data' in df_divida.columns and 'Tipo_Divida' in df_divida.columns:
             df_divida = df_divida.sort_values(by='Data')
-            df_linha = df_divida.groupby('Data')['Valor_Estoque'].sum()
             
+            # Filtra apenas Interna e Externa para o gráfico (Ignora linhas de Total se houver)
+            # Isso evita a duplicação e mostra a composição
+            df_clean = df_divida[df_divida['Tipo_Divida'].str.contains("Interna|Externa", case=False, na=False)]
+            
+            # Pivot para ter colunas separadas para Interna e Externa
+            df_pivot = df_clean.pivot_table(index='Data', columns='Tipo_Divida', values='Valor_Estoque', aggfunc='sum')
+            
+            # Gráfico de Área Empilhada (Mostra a soma visualmente sem duplicar)
             fig2, ax2 = plt.subplots(figsize=(10, 5))
-            ax2.plot(df_linha.index, df_linha.values, color='#D55E00', linewidth=2)
+            df_pivot.plot(kind='area', ax=ax2, alpha=0.6)
+            
             ax2.yaxis.set_major_formatter(ticker.FuncFormatter(format_tri))
+            ax2.set_title("Evolução do Estoque (Interna vs. Externa)")
             ax2.grid(True, alpha=0.3)
-            ax2.set_title("Evolução do Estoque Total")
             st.pyplot(fig2)
             
-            ult = df_linha.iloc[-1]
-            st.metric(f"Estoque ({df_linha.index[-1].strftime('%m/%Y')})", f"R$ {ult*1e-12:.2f} Trilhões")
+            # Métrica (Soma apenas das partes filtradas para garantir precisão)
+            ult_data = df_pivot.index[-1]
+            total_atual = df_pivot.iloc[-1].sum()
+            st.metric(f"Estoque Total Estimado ({ult_data.strftime('%m/%Y')})", f"R$ {total_atual*1e-12:.2f} Trilhões")
+            
         else:
-            st.error("Erro na coluna de Data.")
+            st.error("Colunas 'Data' ou 'Tipo_Divida' não encontradas.")
 
     with tab3:
         st.header("Inteligência")
-        op = st.selectbox("Análise:", ["Selecione...", "📉 Pareto", "⚖️ Sustentabilidade", "📋 Lista Gastos", "🏦 Lista Credores"])
+        op = st.selectbox("Análise:", ["Selecione...", "📉 Pareto (Concentração)", "📋 Ranking de Gastos", "🏦 Dívida Interna vs Externa"])
         if op != "Selecione...":
             st.markdown(gerar_insight_avancado(op, df_gastos, df_divida))
 
 else:
     st.error("Erro: Arquivos CSV não carregados.")
+
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit 
-Correção robusta de leitura de arquivos (UTF-8 e Latin-1)
+Aplicativo Streamlit (v6.2 - Versão Final "Força Bruta")
+Usa engine='python' e tratamento de erros de encoding para garantir a leitura.
 """
 
 import streamlit as st
@@ -17,62 +17,74 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- FUNÇÕES AUXILIARES DE LIMPEZA ---
+# --- FUNÇÕES AUXILIARES ---
 
 def normalizar_colunas(df):
     """Remove acentos e espaços dos nomes das colunas para padronizar."""
     novas_colunas = {}
     for col in df.columns:
-        nfkd_form = unicodedata.normalize('NFKD', col)
-        sem_acento = u"".join([c for c in nfkd_form if not unicodedata.combining(c)])
-        novo_nome = sem_acento.lower().strip().replace(' ', '_')
-        novas_colunas[col] = novo_nome
+        try:
+            # Tenta normalizar string
+            nfkd_form = unicodedata.normalize('NFKD', str(col))
+            sem_acento = u"".join([c for c in nfkd_form if not unicodedata.combining(c)])
+            novo_nome = sem_acento.lower().strip().replace(' ', '_')
+            novas_colunas[col] = novo_nome
+        except:
+            # Se falhar (ex: coluna não é string), mantem original
+            novas_colunas[col] = col
     return df.rename(columns=novas_colunas)
 
-def ler_csv_seguro(arquivo):
-    """Tenta ler o CSV com diferentes encodings."""
-    try:
-        return pd.read_csv(arquivo, sep=';', encoding='utf-8')
-    except (UnicodeDecodeError, pd.errors.ParserError):
-        try:
-            return pd.read_csv(arquivo, sep=';', encoding='latin1')
-        except Exception as e:
-            st.error(f"Erro crítico ao ler {arquivo}: {e}")
-            return None
-    except FileNotFoundError:
-        # Tenta nomes alternativos caso o usuário não tenha renomeado
-        alternativos = {
-            "gastos_orcamento_2025.csv": "2025_OrcamentoDespesa.csv",
-            "divida_estoque_historico.csv": "estoquedpf (1).csv"
-        }
-        if arquivo in alternativos:
+def ler_csv_forca_bruta(arquivo):
+    """
+    Tenta ler o CSV de todas as formas possíveis.
+    """
+    encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
+    separadores = [';', ',']
+    
+    for enc in encodings:
+        for sep in separadores:
             try:
-                return ler_csv_seguro(alternativos[arquivo])
+                # Tenta ler apenas as primeiras linhas para ver se não dá erro
+                df = pd.read_csv(arquivo, sep=sep, encoding=enc, nrows=5)
+                
+                # Se funcionou, lê o arquivo inteiro
+                # on_bad_lines='skip' ignora linhas quebradas
+                df_full = pd.read_csv(arquivo, sep=sep, encoding=enc, on_bad_lines='skip')
+                return df_full
             except:
-                pass
-        st.error(f"ARQUIVO NÃO ENCONTRADO: '{arquivo}'. Verifique se o nome no GitHub está correto.")
-        return None
+                continue
+                
+    return None
 
-# --- 1. CARREGAMENTO DE DADOS (BLINDADO) ---
+# --- 1. CARREGAMENTO DE DADOS ---
 
 @st.cache_data(ttl=3600)
 def carregar_dados_gastos():
-    df = ler_csv_seguro("gastos_orcamento_2025.csv")
-    if df is None: return pd.DataFrame()
+    # Tenta encontrar o arquivo com nome oficial ou renomeado
+    arquivo = "gastos_orcamento_2025.csv"
+    df = ler_csv_forca_bruta(arquivo)
+    
+    if df is None:
+        # Tenta o nome alternativo que apareceu nos seus prints
+        df = ler_csv_forca_bruta("2025_OrcamentoDespesa.csv")
+        
+    if df is None:
+        st.error("Erro fatal: Não foi possível ler o arquivo de gastos em nenhum formato.")
+        return pd.DataFrame()
             
     df = normalizar_colunas(df)
     
-    # Mapeamento flexível
+    # Mapeamento flexível (procura palavras-chave nas colunas)
     col_map = {
-        'funcao': next((c for c in df.columns if 'funcao' in c and 'sub' not in c), None),
-        'orgao_superior': next((c for c in df.columns if 'superior' in c), None),
-        'unidade_orcamentaria': next((c for c in df.columns if 'unidade' in c), None),
-        'valor': next((c for c in df.columns if 'realizado' in c or 'pago' in c), None)
+        'funcao': next((c for c in df.columns if 'funcao' in str(c) and 'sub' not in str(c)), None),
+        'orgao_superior': next((c for c in df.columns if 'superior' in str(c)), None),
+        'unidade_orcamentaria': next((c for c in df.columns if 'unidade' in str(c)), None),
+        'valor': next((c for c in df.columns if 'realizado' in str(c) or 'pago' in str(c)), None)
     }
     
-    # Se não achar as colunas essenciais, retorna vazio
+    # Se não achar colunas essenciais
     if not col_map['funcao'] or not col_map['valor']:
-        st.error("Colunas essenciais (Função ou Valor) não encontradas no arquivo de gastos.")
+        st.warning(f"Colunas esperadas não encontradas. Colunas disponíveis: {list(df.columns)}")
         return pd.DataFrame()
 
     df = df.rename(columns={
@@ -82,29 +94,41 @@ def carregar_dados_gastos():
         col_map['valor']: 'Valor_Realizado'
     })
     
-    # Limpeza numérica
+    # Limpeza numérica agressiva
     df['Valor_Realizado'] = df['Valor_Realizado'].astype(str)
+    # Remove tudo que não for número, vírgula ou ponto
+    df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(r'[^\d,.-]', '', regex=True)
+    # Troca vírgula decimal por ponto
     df['Valor_Realizado'] = df['Valor_Realizado'].str.replace('.', '', regex=False)
     df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(',', '.', regex=False)
+    
     df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
+    
     return df.dropna(subset=['Valor_Realizado'])
 
 @st.cache_data(ttl=3600)
 def carregar_dados_divida():
-    df = ler_csv_seguro("divida_estoque_historico.csv")
-    if df is None: return pd.DataFrame()
+    arquivo = "divida_estoque_historico.csv"
+    df = ler_csv_forca_bruta(arquivo)
+    
+    if df is None:
+        df = ler_csv_forca_bruta("estoquedpf (1).csv")
+        
+    if df is None:
+        st.error("Erro fatal: Não foi possível ler o arquivo da dívida.")
+        return pd.DataFrame()
 
     df = normalizar_colunas(df)
     
     col_map = {
-        'data': next((c for c in df.columns if 'mes' in c or 'data' in c), None),
-        'tipo': next((c for c in df.columns if 'tipo' in c), None),
-        'valor': next((c for c in df.columns if 'valor' in c), None),
-        'detentor': next((c for c in df.columns if 'detentor' in c), None)
+        'data': next((c for c in df.columns if 'mes' in str(c) or 'data' in str(c)), None),
+        'tipo': next((c for c in df.columns if 'tipo' in str(c)), None),
+        'valor': next((c for c in df.columns if 'valor' in str(c)), None),
+        'detentor': next((c for c in df.columns if 'detentor' in str(c)), None)
     }
     
     if not col_map['data'] or not col_map['valor']:
-        st.error("Colunas essenciais (Data ou Valor) não encontradas no arquivo da dívida.")
+        st.warning(f"Colunas da dívida não encontradas. Disponíveis: {list(df.columns)}")
         return pd.DataFrame()
     
     rename_dict = {col_map['data']: 'Data', col_map['valor']: 'Valor_Estoque'}
@@ -115,22 +139,27 @@ def carregar_dados_divida():
     
     # Tratamento de Data
     df['Data'] = df['Data'].astype(str).str.strip()
-    try:
-        df['Data'] = pd.to_datetime(df['Data'], format='%m/%Y')
-    except:
-        df['Data'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
+    # Tenta converter forçando erros a NaT e removendo-os
+    df['Data_Temp'] = pd.to_datetime(df['Data'], format='%m/%Y', errors='coerce')
+    # Se falhar muito, tenta outro formato
+    mask = df['Data_Temp'].isna()
+    if mask.any():
+        df.loc[mask, 'Data_Temp'] = pd.to_datetime(df.loc[mask, 'Data'], format='%d/%m/%Y', errors='coerce')
     
+    df['Data'] = df['Data_Temp']
     df = df.dropna(subset=['Data'])
     df['Ano'] = df['Data'].dt.year
 
     # Limpeza numérica
     df['Valor_Estoque'] = df['Valor_Estoque'].astype(str)
+    df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(r'[^\d,.-]', '', regex=True)
     df['Valor_Estoque'] = df['Valor_Estoque'].str.replace('.', '', regex=False)
     df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(',', '.', regex=False)
     df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
+    
     return df.dropna(subset=['Valor_Estoque'])
 
-# --- 2. CÉREBRO DE ANÁLISE (COM EXPLICAÇÕES NOVAS) ---
+# --- 2. CÉREBRO DE ANÁLISE ---
 
 def gerar_insight_avancado(pergunta, df_gastos, df_divida):
     try:
@@ -144,6 +173,7 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
             df_perc = (df_acumulado / total_gasto) * 100
             funcoes_80 = df_perc[df_perc <= 80].count() + 1
             total_funcoes = len(df_funcoes)
+            
             top_1 = df_funcoes.index[0]
             top_1_perc = (df_funcoes.iloc[0] / total_gasto) * 100
 
@@ -197,8 +227,8 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
                 return res
             else:
                 df_rank = df_recente.groupby('Tipo_Divida')['Valor_Estoque'].sum().sort_values(ascending=False)
-                res = f"### 🏦 Composição da Dívida ({data_max.strftime('%m/%Y')})\n\n"
-                res += "**Nota:** Dados detalhados por credor não encontrados no CSV histórico. Exibindo por Tipo.\n\n"
+                res = f"### 🏦 Composição da Dívida por Tipo ({data_max.strftime('%m/%Y')})\n\n"
+                res += "**Nota:** Dados detalhados por credor não encontrados no CSV. Exibindo por Tipo.\n\n"
                 for tipo, valor in df_rank.items():
                      res += f"- **{tipo}**: R$ {valor*1e-9:.0f} bi\n"
                 return res
@@ -230,7 +260,7 @@ if not df_gastos.empty and not df_divida.empty:
         st.info("""
         ℹ️ **Entenda os dados:** A categoria **"Encargos Especiais"** (frequentemente a maior barra do gráfico) 
         representa majoritariamente o **Serviço da Dívida Pública** (refinanciamento, amortização e juros) 
-        e outras transferências constitucionais obrigatórias. Ela não reflete o custo operacional da máquina pública (salários, luz, etc.), 
+        e outras transferências constitucionais obrigatórias. Ela não reflete o custo operacional da máquina pública, 
         mas sim os compromissos financeiros do Estado.
         """)
         
@@ -293,5 +323,4 @@ if not df_gastos.empty and not df_divida.empty:
             st.markdown(gerar_insight_avancado(escolha, df_gastos, df_divida))
 
 else:
-    st.error("Erro crítico: Verifique os arquivos CSV no GitHub.")
-
+    st.error("Erro crítico: Verifique se os arquivos CSV estão no GitHub.")

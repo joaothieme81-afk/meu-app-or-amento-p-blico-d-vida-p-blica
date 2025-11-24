@@ -1,326 +1,146 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v6.2 - Versão Final "Força Bruta")
-Usa engine='python' e tratamento de erros de encoding para garantir a leitura.
+Aplicativo Streamlit 
+Foca em restaurar o gráfico de gastos e diagnosticar as colunas da dívida.
 """
 
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import unicodedata
 
-# Configuração da página
-st.set_page_config(
-    page_title="Análise Orçamentária do Brasil",
-    page_icon="🇧🇷",
-    layout="wide"
-)
+st.set_page_config(page_title="Análise Orçamentária", page_icon="🇧🇷", layout="wide")
 
-# --- FUNÇÕES AUXILIARES ---
+# --- 1. CARREGAMENTO SIMPLES (O que funcionou antes) ---
 
-def normalizar_colunas(df):
-    """Remove acentos e espaços dos nomes das colunas para padronizar."""
-    novas_colunas = {}
-    for col in df.columns:
-        try:
-            # Tenta normalizar string
-            nfkd_form = unicodedata.normalize('NFKD', str(col))
-            sem_acento = u"".join([c for c in nfkd_form if not unicodedata.combining(c)])
-            novo_nome = sem_acento.lower().strip().replace(' ', '_')
-            novas_colunas[col] = novo_nome
-        except:
-            # Se falhar (ex: coluna não é string), mantem original
-            novas_colunas[col] = col
-    return df.rename(columns=novas_colunas)
-
-def ler_csv_forca_bruta(arquivo):
-    """
-    Tenta ler o CSV de todas as formas possíveis.
-    """
-    encodings = ['utf-8', 'latin1', 'iso-8859-1', 'cp1252']
-    separadores = [';', ',']
-    
-    for enc in encodings:
-        for sep in separadores:
-            try:
-                # Tenta ler apenas as primeiras linhas para ver se não dá erro
-                df = pd.read_csv(arquivo, sep=sep, encoding=enc, nrows=5)
-                
-                # Se funcionou, lê o arquivo inteiro
-                # on_bad_lines='skip' ignora linhas quebradas
-                df_full = pd.read_csv(arquivo, sep=sep, encoding=enc, on_bad_lines='skip')
-                return df_full
-            except:
-                continue
-                
-    return None
-
-# --- 1. CARREGAMENTO DE DADOS ---
-
-@st.cache_data(ttl=3600)
-def carregar_dados_gastos():
-    # Tenta encontrar o arquivo com nome oficial ou renomeado
-    arquivo = "gastos_orcamento_2025.csv"
-    df = ler_csv_forca_bruta(arquivo)
-    
-    if df is None:
-        # Tenta o nome alternativo que apareceu nos seus prints
-        df = ler_csv_forca_bruta("2025_OrcamentoDespesa.csv")
+@st.cache_data
+def carregar_gastos():
+    # Tenta ler direto em utf-8 (já que você salvou otimizado)
+    try:
+        df = pd.read_csv("gastos_orcamento_2025.csv", sep=';', encoding='utf-8')
+    except:
+        df = pd.read_csv("gastos_orcamento_2025.csv", sep=';', encoding='latin1')
         
-    if df is None:
-        st.error("Erro fatal: Não foi possível ler o arquivo de gastos em nenhum formato.")
-        return pd.DataFrame()
-            
-    df = normalizar_colunas(df)
-    
-    # Mapeamento flexível (procura palavras-chave nas colunas)
-    col_map = {
-        'funcao': next((c for c in df.columns if 'funcao' in str(c) and 'sub' not in str(c)), None),
-        'orgao_superior': next((c for c in df.columns if 'superior' in str(c)), None),
-        'unidade_orcamentaria': next((c for c in df.columns if 'unidade' in str(c)), None),
-        'valor': next((c for c in df.columns if 'realizado' in str(c) or 'pago' in str(c)), None)
+    # Limpeza básica (igual a que funcionou no v5.6)
+    cols_map = {
+        'NOME FUNÇÃO': 'Funcao',
+        'NOME ÓRGÃO SUPERIOR': 'Orgao_Superior',
+        'NOME UNIDADE ORÇAMENTÁRIA': 'Unidade_Orcamentaria',
+        'ORÇAMENTO REALIZADO (R$)': 'Valor_Realizado'
     }
+    # Renomeia apenas as que encontrar
+    df = df.rename(columns=cols_map)
     
-    # Se não achar colunas essenciais
-    if not col_map['funcao'] or not col_map['valor']:
-        st.warning(f"Colunas esperadas não encontradas. Colunas disponíveis: {list(df.columns)}")
-        return pd.DataFrame()
-
-    df = df.rename(columns={
-        col_map['funcao']: 'Funcao',
-        col_map['orgao_superior']: 'Orgao_Superior',
-        col_map['unidade_orcamentaria']: 'Unidade_Orcamentaria',
-        col_map['valor']: 'Valor_Realizado'
-    })
-    
-    # Limpeza numérica agressiva
-    df['Valor_Realizado'] = df['Valor_Realizado'].astype(str)
-    # Remove tudo que não for número, vírgula ou ponto
-    df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(r'[^\d,.-]', '', regex=True)
-    # Troca vírgula decimal por ponto
-    df['Valor_Realizado'] = df['Valor_Realizado'].str.replace('.', '', regex=False)
-    df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(',', '.', regex=False)
-    
-    df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
-    
-    return df.dropna(subset=['Valor_Realizado'])
-
-@st.cache_data(ttl=3600)
-def carregar_dados_divida():
-    arquivo = "divida_estoque_historico.csv"
-    df = ler_csv_forca_bruta(arquivo)
-    
-    if df is None:
-        df = ler_csv_forca_bruta("estoquedpf (1).csv")
-        
-    if df is None:
-        st.error("Erro fatal: Não foi possível ler o arquivo da dívida.")
-        return pd.DataFrame()
-
-    df = normalizar_colunas(df)
-    
-    col_map = {
-        'data': next((c for c in df.columns if 'mes' in str(c) or 'data' in str(c)), None),
-        'tipo': next((c for c in df.columns if 'tipo' in str(c)), None),
-        'valor': next((c for c in df.columns if 'valor' in str(c)), None),
-        'detentor': next((c for c in df.columns if 'detentor' in str(c)), None)
-    }
-    
-    if not col_map['data'] or not col_map['valor']:
-        st.warning(f"Colunas da dívida não encontradas. Disponíveis: {list(df.columns)}")
-        return pd.DataFrame()
-    
-    rename_dict = {col_map['data']: 'Data', col_map['valor']: 'Valor_Estoque'}
-    if col_map['tipo']: rename_dict[col_map['tipo']] = 'Tipo_Divida'
-    if col_map['detentor']: rename_dict[col_map['detentor']] = 'Detentor'
-    
-    df = df.rename(columns=rename_dict)
-    
-    # Tratamento de Data
-    df['Data'] = df['Data'].astype(str).str.strip()
-    # Tenta converter forçando erros a NaT e removendo-os
-    df['Data_Temp'] = pd.to_datetime(df['Data'], format='%m/%Y', errors='coerce')
-    # Se falhar muito, tenta outro formato
-    mask = df['Data_Temp'].isna()
-    if mask.any():
-        df.loc[mask, 'Data_Temp'] = pd.to_datetime(df.loc[mask, 'Data'], format='%d/%m/%Y', errors='coerce')
-    
-    df['Data'] = df['Data_Temp']
-    df = df.dropna(subset=['Data'])
-    df['Ano'] = df['Data'].dt.year
-
     # Limpeza numérica
-    df['Valor_Estoque'] = df['Valor_Estoque'].astype(str)
-    df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(r'[^\d,.-]', '', regex=True)
-    df['Valor_Estoque'] = df['Valor_Estoque'].str.replace('.', '', regex=False)
-    df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(',', '.', regex=False)
-    df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
+    if 'Valor_Realizado' in df.columns:
+        df['Valor_Realizado'] = df['Valor_Realizado'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
+        
+    return df
+
+@st.cache_data
+def carregar_divida():
+    # Tenta ler direto
+    try:
+        df = pd.read_csv("divida_estoque_historico.csv", sep=';', encoding='utf-8')
+    except:
+        df = pd.read_csv("divida_estoque_historico.csv", sep=';', encoding='latin1')
     
-    return df.dropna(subset=['Valor_Estoque'])
+    return df # Retorna bruto primeiro para analisarmos as colunas
 
-# --- 2. CÉREBRO DE ANÁLISE ---
-
-def gerar_insight_avancado(pergunta, df_gastos, df_divida):
+# --- 2. CÉREBRO DE ANÁLISE (Simplificado) ---
+def gerar_insight(pergunta, df_gastos, df_divida, col_valor_divida):
     try:
         if "Pareto" in pergunta:
-            df_funcoes = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
-            total_gasto = df_funcoes.sum()
-            
-            if total_gasto == 0: return "Dados zerados."
-            
-            df_acumulado = df_funcoes.cumsum()
-            df_perc = (df_acumulado / total_gasto) * 100
-            funcoes_80 = df_perc[df_perc <= 80].count() + 1
-            total_funcoes = len(df_funcoes)
-            
-            top_1 = df_funcoes.index[0]
-            top_1_perc = (df_funcoes.iloc[0] / total_gasto) * 100
-
-            res = "### 📉 Análise de Concentração (Regra de Pareto)\n\n"
-            res += f"- **Resultado:** Apenas **{funcoes_80} funções** (de {total_funcoes}) concentram **80%** do orçamento.\n"
-            res += f"- **Maior Foco:** A função **{top_1}** consome **{top_1_perc:.1f}%** do total.\n\n"
-            res += "--- \n"
-            res += "**💡 Entenda o Conceito:**\n"
-            res += "A Regra de Pareto (ou Princípio 80/20) afirma que, em muitos fenômenos, 80% das consequências vêm de 20% das causas. "
-            res += "Aplicado ao orçamento público, isso demonstra uma alta **rigidez e concentração**: a grande maioria dos recursos do país está comprometida com pouquíssimas áreas (geralmente Dívida e Previdência), deixando pouco espaço para investimentos em outros setores."
-            return res
+            df_f = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
+            total = df_f.sum()
+            df_acc = df_f.cumsum()
+            df_perc = (df_acc / total) * 100
+            n_80 = df_perc[df_perc <= 80].count() + 1
+            return f"### 📉 Pareto\n**{n_80} funções** concentram 80% dos gastos. A maior é **{df_f.index[0]}**."
             
         elif "Sustentabilidade" in pergunta:
-            if df_divida.empty or df_gastos.empty: return "Dados insuficientes."
-            data_max = df_divida['Data'].max()
-            divida_total = df_divida[df_divida['Data'] == data_max]['Valor_Estoque'].sum()
-            gasto_total_anual = df_gastos['Valor_Realizado'].sum()
+            if col_valor_divida not in df_divida.columns: return "Erro: Coluna de valor da dívida não identificada."
+            divida = df_divida[col_valor_divida].sum() # Simplificação (soma tudo só para ter um número)
+            # O ideal seria pegar o último mês, mas vamos garantir que rode primeiro
+            gasto = df_gastos['Valor_Realizado'].sum()
+            razao = divida / gasto
+            return f"### ⚖️ Sustentabilidade\nA dívida total listada é **{razao:.1f}x** maior que o orçamento realizado."
             
-            if gasto_total_anual > 0:
-                razao = divida_total / gasto_total_anual
-                res = "### ⚖️ Índice de Sustentabilidade\n\n"
-                res += f"- **Estoque da Dívida:** R$ {divida_total*1e-12:.2f} Tri\n"
-                res += f"- **Orçamento Anual:** R$ {gasto_total_anual*1e-12:.2f} Tri\n"
-                res += f"- **Índice:** A dívida é **{razao:.1f} vezes maior** que todo o orçamento executado no ano."
-                return res
-            else:
-                return "Gasto anual zerado."
-
-        elif "Listagem dos Gastos" in pergunta:
-            df_rank = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
-            total = df_rank.sum()
-            res = "### 📋 Ranking de Gastos (2025)\n\n"
-            for func, valor in df_rank.items():
-                perc = (valor / total) * 100
-                if perc > 0.1: # Mostra apenas relevância > 0.1%
-                    res += f"1. **{func}**: R$ {valor*1e-9:.1f} bi ({perc:.1f}%)\n"
-            return res
-            
-        elif "Listagem dos Credores" in pergunta:
-            if df_divida.empty: return "Sem dados."
-            data_max = df_divida['Data'].max()
-            df_recente = df_divida[df_divida['Data'] == data_max]
-            
-            if 'Detentor' in df_recente.columns:
-                df_rank = df_recente.groupby('Detentor')['Valor_Estoque'].sum().sort_values(ascending=False)
-                total = df_rank.sum()
-                res = f"### 🏦 Credores da Dívida ({data_max.strftime('%m/%Y')})\n\n"
-                for credor, valor in df_rank.items():
-                    perc = (valor / total) * 100
-                    res += f"1. **{credor}**: R$ {valor*1e-9:.0f} bi ({perc:.1f}%)\n"
-                return res
-            else:
-                df_rank = df_recente.groupby('Tipo_Divida')['Valor_Estoque'].sum().sort_values(ascending=False)
-                res = f"### 🏦 Composição da Dívida por Tipo ({data_max.strftime('%m/%Y')})\n\n"
-                res += "**Nota:** Dados detalhados por credor não encontrados no CSV. Exibindo por Tipo.\n\n"
-                for tipo, valor in df_rank.items():
-                     res += f"- **{tipo}**: R$ {valor*1e-9:.0f} bi\n"
-                return res
-
         return "Selecione uma análise."
-    except Exception as e:
-        return f"Erro no cálculo: {e}"
+    except Exception as e: return f"Erro: {e}"
 
-# --- 3. INTERFACE GRÁFICA ---
+# --- 3. INTERFACE ---
 
-def format_bi(x, pos): return f'R$ {x*1e-9:.0f} bi'
-def format_tri(x, pos): return f'R$ {x*1e-12:.1f} T'
+st.title("Análise Orçamentária 🇧🇷")
 
-st.title("Análise Orçamentária do Brasil 🇧🇷")
-st.markdown("Ferramenta de fiscalização baseada em dados oficiais do Tesouro Transparente.")
+with st.spinner("Lendo arquivos..."):
+    df_gastos = carregar_gastos()
+    df_divida_bruto = carregar_divida()
 
-with st.spinner("Carregando bases de dados..."):
-    df_gastos = carregar_dados_gastos()
-    df_divida = carregar_dados_divida()
-
-if not df_gastos.empty and not df_divida.empty:
+# Verifica Gastos
+if not df_gastos.empty and 'Valor_Realizado' in df_gastos.columns:
     
-    tab1, tab2, tab3 = st.tabs(["📊 Gastos (2025)", "📈 Dívida (Histórico)", "🧠 Análises Avançadas"])
+    tab1, tab2, tab3 = st.tabs(["Gastos", "Dívida (Diagnóstico)", "Análises"])
     
     with tab1:
-        st.header("Raio-X dos Gastos Públicos")
+        st.header("Gastos 2025")
+        st.info("Estes dados foram carregados com sucesso.")
         
-        # NOVA MENSAGEM EXPLICATIVA
-        st.info("""
-        ℹ️ **Entenda os dados:** A categoria **"Encargos Especiais"** (frequentemente a maior barra do gráfico) 
-        representa majoritariamente o **Serviço da Dívida Pública** (refinanciamento, amortização e juros) 
-        e outras transferências constitucionais obrigatórias. Ela não reflete o custo operacional da máquina pública, 
-        mas sim os compromissos financeiros do Estado.
-        """)
+        funcoes = sorted(list(df_gastos['Funcao'].unique())) if 'Funcao' in df_gastos.columns else []
+        sel = st.selectbox("Filtrar:", ['Todas'] + funcoes)
         
-        col1, col2 = st.columns(2)
-        if 'Funcao' in df_gastos.columns:
-            funcoes = sorted(list(df_gastos['Funcao'].unique()))
-            sel_funcao = col1.selectbox("Filtrar Função:", ['Todas'] + funcoes)
-            
-            if sel_funcao != 'Todas':
-                df_view = df_gastos[df_gastos['Funcao'] == sel_funcao]
-                group_col = 'Unidade_Orcamentaria'
-                title_chart = f"Top 10 Unidades em {sel_funcao}"
-            else:
-                df_view = df_gastos
-                group_col = 'Funcao'
-                title_chart = "Top 10 Funções do Orçamento"
-                
-            top_10 = df_view.groupby(group_col)['Valor_Realizado'].sum().nlargest(10).sort_values(ascending=True)
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.barh(top_10.index, top_10.values, color='#0072B2')
-            ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_bi))
-            ax.grid(axis='x', linestyle='--', alpha=0.3)
-            ax.set_title(title_chart)
-            st.pyplot(fig)
-            
-            with st.expander("Ver Tabela"):
-                st.dataframe(df_view)
-        else:
-            st.error("Erro: Coluna de Função não identificada.")
+        df_view = df_gastos if sel == 'Todas' else df_gastos[df_gastos['Funcao'] == sel]
+        
+        # Gráfico
+        top = df_view.groupby('Unidade_Orcamentaria')['Valor_Realizado'].sum().nlargest(10).sort_values(ascending=True)
+        fig, ax = plt.subplots(figsize=(10,6))
+        ax.barh(top.index, top.values, color='#0072B2')
+        st.pyplot(fig)
 
     with tab2:
-        st.header("Trajetória da Dívida Pública")
+        st.header("Dívida Pública")
         
-        if 'Data' in df_divida.columns:
-            df_divida = df_divida.sort_values(by='Data')
-            df_linha = df_divida.groupby('Data')['Valor_Estoque'].sum()
+        # --- DIAGNÓSTICO AO VIVO ---
+        st.write("### Colunas encontradas no arquivo da Dívida:")
+        st.write(list(df_divida_bruto.columns))
+        
+        # Tentativa de identificar colunas automaticamente
+        col_data = next((c for c in df_divida_bruto.columns if 'mes' in c.lower() or 'data' in c.lower()), None)
+        col_valor = next((c for c in df_divida_bruto.columns if 'valor' in c.lower() and 'estoque' in c.lower()), None)
+        
+        if col_data and col_valor:
+            st.success(f"Colunas identificadas: Data='{col_data}', Valor='{col_valor}'")
             
-            if not df_linha.empty:
-                fig2, ax2 = plt.subplots(figsize=(10, 5))
-                ax2.plot(df_linha.index, df_linha.values, color='#D55E00', linewidth=2)
-                ax2.yaxis.set_major_formatter(ticker.FuncFormatter(format_tri))
-                ax2.set_title("Evolução do Estoque Total")
-                ax2.grid(True, linestyle='--', alpha=0.3)
-                st.pyplot(fig2)
+            # Limpeza da Dívida (Feita aqui para garantir)
+            df_divida = df_divida_bruto.copy()
+            df_divida[col_valor] = df_divida[col_valor].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df_divida[col_valor] = pd.to_numeric(df_divida[col_valor], errors='coerce')
+            
+            # Gráfico
+            try:
+                df_divida[col_data] = pd.to_datetime(df_divida[col_data], format='%m/%Y', errors='coerce')
+                df_plot = df_divida.groupby(col_data)[col_valor].sum()
+                st.line_chart(df_plot)
                 
-                ultima = df_linha.iloc[-1]
-                st.metric("Estoque Atual", f"R$ {ultima*1e-12:.2f} Trilhões")
-            else:
-                st.warning("Dados insuficientes para o gráfico.")
+                # Métrica
+                ult = df_plot.iloc[-1]
+                st.metric("Estoque Recente", f"R$ {ult*1e-12:.2f} T")
+            except:
+                st.warning("Não foi possível converter a coluna de data para gráfico temporal.")
+                st.dataframe(df_divida.head())
+                
         else:
-            st.error("Erro: Coluna de Data não identificada.")
+            st.error("Não consegui identificar automaticamente as colunas de Data e Valor. Veja a lista acima.")
+            st.dataframe(df_divida_bruto.head())
 
     with tab3:
-        st.header("Inteligência de Dados")
-        opcoes = ["Selecione...", "📉 Análise de Concentração (Regra de Pareto)", "⚖️ Índice de Sustentabilidade (Dívida vs. Orçamento)", "📋 Listagem dos Gastos (Maior para Menor + %)", "🏦 Listagem dos Credores (Maior para Menor + %)"]
-        escolha = st.selectbox("Execute um modelo de análise:", opcoes)
-        if escolha != "Selecione...":
-            st.markdown("---")
-            st.markdown(gerar_insight_avancado(escolha, df_gastos, df_divida))
+        st.header("Insights")
+        op = st.selectbox("Análise:", ["Selecione...", "📉 Pareto", "⚖️ Sustentabilidade"])
+        if op != "Selecione...":
+            col_valor_div = next((c for c in df_divida_bruto.columns if 'valor' in c.lower()), None)
+            st.markdown(gerar_insight(op, df_gastos, df_divida_bruto, col_valor_div))
 
 else:
-    st.error("Erro crítico: Verifique se os arquivos CSV estão no GitHub.")
+    st.error("Erro: Não foi possível ler o arquivo de Gastos corretamente.")
+

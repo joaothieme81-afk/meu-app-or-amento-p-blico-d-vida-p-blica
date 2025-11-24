@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v6.0 - Final)
-Inclui explicações didáticas sobre Encargos Especiais e Regra de Pareto.
-Mantém a robustez de leitura de dados da v5.8.
+Aplicativo Streamlit (v6.1 - Finalíssimo)
+Correção robusta de leitura de arquivos (UTF-8 e Latin-1)
 """
 
 import streamlit as st
@@ -30,19 +29,36 @@ def normalizar_colunas(df):
         novas_colunas[col] = novo_nome
     return df.rename(columns=novas_colunas)
 
+def ler_csv_seguro(arquivo):
+    """Tenta ler o CSV com diferentes encodings."""
+    try:
+        return pd.read_csv(arquivo, sep=';', encoding='utf-8')
+    except (UnicodeDecodeError, pd.errors.ParserError):
+        try:
+            return pd.read_csv(arquivo, sep=';', encoding='latin1')
+        except Exception as e:
+            st.error(f"Erro crítico ao ler {arquivo}: {e}")
+            return None
+    except FileNotFoundError:
+        # Tenta nomes alternativos caso o usuário não tenha renomeado
+        alternativos = {
+            "gastos_orcamento_2025.csv": "2025_OrcamentoDespesa.csv",
+            "divida_estoque_historico.csv": "estoquedpf (1).csv"
+        }
+        if arquivo in alternativos:
+            try:
+                return ler_csv_seguro(alternativos[arquivo])
+            except:
+                pass
+        st.error(f"ARQUIVO NÃO ENCONTRADO: '{arquivo}'. Verifique se o nome no GitHub está correto.")
+        return None
+
 # --- 1. CARREGAMENTO DE DADOS (BLINDADO) ---
 
 @st.cache_data(ttl=3600)
 def carregar_dados_gastos():
-    arquivo = "gastos_orcamento_2025.csv"
-    try:
-        df = pd.read_csv(arquivo, sep=';', encoding='utf-8')
-    except:
-        try:
-            df = pd.read_csv(arquivo, sep=';', encoding='latin1')
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo de gastos: {e}")
-            return pd.DataFrame()
+    df = ler_csv_seguro("gastos_orcamento_2025.csv")
+    if df is None: return pd.DataFrame()
             
     df = normalizar_colunas(df)
     
@@ -54,6 +70,11 @@ def carregar_dados_gastos():
         'valor': next((c for c in df.columns if 'realizado' in c or 'pago' in c), None)
     }
     
+    # Se não achar as colunas essenciais, retorna vazio
+    if not col_map['funcao'] or not col_map['valor']:
+        st.error("Colunas essenciais (Função ou Valor) não encontradas no arquivo de gastos.")
+        return pd.DataFrame()
+
     df = df.rename(columns={
         col_map['funcao']: 'Funcao',
         col_map['orgao_superior']: 'Orgao_Superior',
@@ -61,27 +82,17 @@ def carregar_dados_gastos():
         col_map['valor']: 'Valor_Realizado'
     })
     
-    if 'Valor_Realizado' in df.columns:
-        df['Valor_Realizado'] = df['Valor_Realizado'].astype(str)
-        df['Valor_Realizado'] = df['Valor_Realizado'].str.replace('.', '', regex=False)
-        df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(',', '.', regex=False)
-        df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
-        return df.dropna(subset=['Valor_Realizado'])
-    else:
-        st.error("Coluna de valor não encontrada no arquivo de gastos.")
-        return pd.DataFrame()
+    # Limpeza numérica
+    df['Valor_Realizado'] = df['Valor_Realizado'].astype(str)
+    df['Valor_Realizado'] = df['Valor_Realizado'].str.replace('.', '', regex=False)
+    df['Valor_Realizado'] = df['Valor_Realizado'].str.replace(',', '.', regex=False)
+    df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
+    return df.dropna(subset=['Valor_Realizado'])
 
 @st.cache_data(ttl=3600)
 def carregar_dados_divida():
-    arquivo = "divida_estoque_historico.csv"
-    try:
-        df = pd.read_csv(arquivo, sep=';', encoding='utf-8')
-    except:
-        try:
-            df = pd.read_csv(arquivo, sep=';', encoding='latin1')
-        except Exception as e:
-            st.error(f"Erro ao ler arquivo da dívida: {e}")
-            return pd.DataFrame()
+    df = ler_csv_seguro("divida_estoque_historico.csv")
+    if df is None: return pd.DataFrame()
 
     df = normalizar_colunas(df)
     
@@ -92,33 +103,32 @@ def carregar_dados_divida():
         'detentor': next((c for c in df.columns if 'detentor' in c), None)
     }
     
+    if not col_map['data'] or not col_map['valor']:
+        st.error("Colunas essenciais (Data ou Valor) não encontradas no arquivo da dívida.")
+        return pd.DataFrame()
+    
     rename_dict = {col_map['data']: 'Data', col_map['valor']: 'Valor_Estoque'}
     if col_map['tipo']: rename_dict[col_map['tipo']] = 'Tipo_Divida'
     if col_map['detentor']: rename_dict[col_map['detentor']] = 'Detentor'
     
     df = df.rename(columns=rename_dict)
     
-    if 'Data' in df.columns:
-        df['Data'] = df['Data'].astype(str).str.strip()
-        try:
-            df['Data'] = pd.to_datetime(df['Data'], format='%m/%Y')
-        except:
-            df['Data'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
-        df = df.dropna(subset=['Data'])
-        df['Ano'] = df['Data'].dt.year
-    else:
-        st.error("Coluna de Data não encontrada no arquivo de dívida.")
-        return pd.DataFrame()
+    # Tratamento de Data
+    df['Data'] = df['Data'].astype(str).str.strip()
+    try:
+        df['Data'] = pd.to_datetime(df['Data'], format='%m/%Y')
+    except:
+        df['Data'] = pd.to_datetime(df['Data'], format='%d/%m/%Y', errors='coerce')
+    
+    df = df.dropna(subset=['Data'])
+    df['Ano'] = df['Data'].dt.year
 
-    if 'Valor_Estoque' in df.columns:
-        df['Valor_Estoque'] = df['Valor_Estoque'].astype(str)
-        df['Valor_Estoque'] = df['Valor_Estoque'].str.replace('.', '', regex=False)
-        df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(',', '.', regex=False)
-        df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
-        return df.dropna(subset=['Valor_Estoque'])
-    else:
-        st.error("Coluna de Valor não encontrada no arquivo de dívida.")
-        return pd.DataFrame()
+    # Limpeza numérica
+    df['Valor_Estoque'] = df['Valor_Estoque'].astype(str)
+    df['Valor_Estoque'] = df['Valor_Estoque'].str.replace('.', '', regex=False)
+    df['Valor_Estoque'] = df['Valor_Estoque'].str.replace(',', '.', regex=False)
+    df['Valor_Estoque'] = pd.to_numeric(df['Valor_Estoque'], errors='coerce')
+    return df.dropna(subset=['Valor_Estoque'])
 
 # --- 2. CÉREBRO DE ANÁLISE (COM EXPLICAÇÕES NOVAS) ---
 
@@ -157,9 +167,10 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
                 res = "### ⚖️ Índice de Sustentabilidade\n\n"
                 res += f"- **Estoque da Dívida:** R$ {divida_total*1e-12:.2f} Tri\n"
                 res += f"- **Orçamento Anual:** R$ {gasto_total_anual*1e-12:.2f} Tri\n"
-                res += f"- **Índice:** A dívida é **{razao:.1f} vezes maior** que todo o orçamento anual."
+                res += f"- **Índice:** A dívida é **{razao:.1f} vezes maior** que todo o orçamento executado no ano."
                 return res
-            else: return "Gasto anual zerado."
+            else:
+                return "Gasto anual zerado."
 
         elif "Listagem dos Gastos" in pergunta:
             df_rank = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
@@ -167,7 +178,8 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
             res = "### 📋 Ranking de Gastos (2025)\n\n"
             for func, valor in df_rank.items():
                 perc = (valor / total) * 100
-                if perc > 0.1: res += f"1. **{func}**: R$ {valor*1e-9:.1f} bi ({perc:.1f}%)\n"
+                if perc > 0.1: # Mostra apenas relevância > 0.1%
+                    res += f"1. **{func}**: R$ {valor*1e-9:.1f} bi ({perc:.1f}%)\n"
             return res
             
         elif "Listagem dos Credores" in pergunta:
@@ -177,17 +189,19 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
             
             if 'Detentor' in df_recente.columns:
                 df_rank = df_recente.groupby('Detentor')['Valor_Estoque'].sum().sort_values(ascending=False)
-                tipo = "Credor"
+                total = df_rank.sum()
+                res = f"### 🏦 Credores da Dívida ({data_max.strftime('%m/%Y')})\n\n"
+                for credor, valor in df_rank.items():
+                    perc = (valor / total) * 100
+                    res += f"1. **{credor}**: R$ {valor*1e-9:.0f} bi ({perc:.1f}%)\n"
+                return res
             else:
                 df_rank = df_recente.groupby('Tipo_Divida')['Valor_Estoque'].sum().sort_values(ascending=False)
-                tipo = "Tipo"
-                
-            total = df_rank.sum()
-            res = f"### 🏦 Composição da Dívida por {tipo} ({data_max.strftime('%m/%Y')})\n\n"
-            for item, valor in df_rank.items():
-                perc = (valor / total) * 100
-                res += f"1. **{item}**: R$ {valor*1e-9:.0f} bi ({perc:.1f}%)\n"
-            return res
+                res = f"### 🏦 Composição da Dívida ({data_max.strftime('%m/%Y')})\n\n"
+                res += "**Nota:** Dados detalhados por credor não encontrados no CSV histórico. Exibindo por Tipo.\n\n"
+                for tipo, valor in df_rank.items():
+                     res += f"- **{tipo}**: R$ {valor*1e-9:.0f} bi\n"
+                return res
 
         return "Selecione uma análise."
     except Exception as e:
@@ -280,5 +294,3 @@ if not df_gastos.empty and not df_divida.empty:
 
 else:
     st.error("Erro crítico: Verifique os arquivos CSV no GitHub.")
-
-

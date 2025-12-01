@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Aplicativo Streamlit (v9.1 - Finalíssima)
+Aplicativo Streamlit (v9.2 - Ajuste Final)
 - Aba 1: Gráfico de Barras (Ranking).
-- Aba 2: Treemap (Hierarquia Encargos).
+- Aba 2: Treemap (Hierarquia Encargos com explicação detalhada).
 - Aba 3: Evolução Dívida (Área).
-- Aba 4: Inteligência (Pareto + Sustentabilidade + Listagens).
+- Aba 4: Inteligência (Removida previsão de pagamento).
 - Sidebar: Links de Referência Oficiais.
 """
 
@@ -133,7 +133,7 @@ def carregar_dados_divida():
         
     return df.dropna(subset=['Valor_Estoque'])
 
-# --- 2. CÉREBRO DE ANÁLISE (FUNÇÕES RESTAURADAS) ---
+# --- 2. CÉREBRO DE ANÁLISE ---
 
 def gerar_insight_avancado(pergunta, df_gastos, df_divida):
     try:
@@ -155,24 +155,6 @@ def gerar_insight_avancado(pergunta, df_gastos, df_divida):
 **💡 Entenda o Conceito:**
 A Regra de Pareto (80/20) aplicada aqui demonstra a **rigidez orçamentária**: a grande maioria dos recursos está comprometida com pouquíssimas áreas (principalmente Dívida e Previdência).
 """
-        
-        elif "Sustentabilidade" in pergunta:
-            data_max = df_divida['Data'].max()
-            divida_total = df_divida[df_divida['Data'] == data_max]['Valor_Estoque'].sum()
-            
-            # Filtra gastos apenas com "Dívida/Encargos" para simular capacidade de pagamento
-            gasto_divida = df_gastos[df_gastos['Categoria_Macro'].str.contains("Dívida")]['Valor_Realizado'].sum()
-            
-            if gasto_divida > 0:
-                anos = divida_total / gasto_divida
-                return f"""
-### ⏳ Estimativa de Quitação (Cenário Estável)
-- **Estoque da Dívida:** R$ {divida_total*1e-12:.2f} Trilhões
-- **Fluxo Anual de Pagamento (Encargos):** R$ {gasto_divida*1e-12:.2f} Trilhões/ano
-
-**Resultado:** Levaria aproximadamente **{anos:.1f} anos** para zerar a dívida usando apenas a verba atual de encargos.
-"""
-            else: return "Dados de encargos não encontrados."
 
         elif "Listagem dos Gastos" in pergunta:
             df_rank = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
@@ -240,7 +222,17 @@ if not df_gastos.empty and not df_divida.empty:
     # ABA 2: TREEMAP
     with tab2:
         st.header("Mapa Hierárquico de Gastos")
-        st.info("🟥 **Dívida (Amortização)** | 🟧 **Dívida (Juros)** | 🟦 **Social/Adm**")
+        # EXPLICAÇÃO ATUALIZADA SOBRE ENCARGOS ESPECIAIS
+        st.info("""
+        **Entenda a divisão dos Encargos Especiais (Área Vermelha/Laranja):**
+        
+        O orçamento federal agrupa as despesas financeiras na função "Encargos Especiais". Este gráfico revela sua composição interna:
+        
+        - 🟥 **Amortização/Rolagem (Principal):** É o refinanciamento da dívida. O governo emite novos títulos para pagar os antigos que venceram. Embora movimente trilhões, é uma troca de dívida por dívida (o estoque se mantém).
+        - 🟧 **Juros e Encargos (Custo):** É o pagamento efetivo dos juros (o "aluguel" do dinheiro). Este é o custo real para o Estado.
+        - 🟦 **Despesas Sociais:** São os gastos finalísticos que retornam em serviços (Saúde, Educação, etc).
+        """)
+        
         if 'Grupo_Despesa' in df_gastos.columns:
             df_tree = df_gastos.groupby(['Categoria_Macro', 'Funcao'])['Valor_Realizado'].sum().reset_index()
             fig_tree = px.treemap(
@@ -270,13 +262,12 @@ if not df_gastos.empty and not df_divida.empty:
             st.plotly_chart(fig_area, use_container_width=True)
             st.metric("Estoque Atual", f"R$ {df_lin.iloc[-1]*1e-12:.2f} Trilhões")
 
-    # ABA 4: INTELIGÊNCIA (RESTAURADA)
+    # ABA 4: INTELIGÊNCIA (REMOVIDA PREVISÃO DE PAGAMENTO)
     with tab4:
         st.header("Inteligência de Dados")
         opcoes = [
             "Selecione...", 
             "📉 Análise de Concentração (Regra de Pareto)", 
-            "⏳ Previsão de Pagamento (Cenário Estável)", 
             "📋 Listagem dos Gastos (Maior para Menor)", 
             "🏦 Composição da Dívida (Interna vs Externa)"
         ]
@@ -285,7 +276,7 @@ if not df_gastos.empty and not df_divida.empty:
             st.markdown("---")
             st.markdown(gerar_insight_avancado(op, df_gastos, df_divida))
 
-    # --- BARRA LATERAL (LINKS ADICIONADOS) ---
+    # --- BARRA LATERAL ---
     st.sidebar.title("Referências e Fontes")
     st.sidebar.info("""
     **Dados utilizados neste projeto:**
@@ -298,5 +289,6 @@ if not df_gastos.empty and not df_divida.empty:
 
 else:
     st.error("Erro: Arquivos CSV não carregados.")
+
 
 

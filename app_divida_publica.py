@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 Aplicativo Streamlit (v9.0 - Final com Treemap)
-- Implementa Gráfico Treemap (Hierárquico).
-- Separa 'Encargos Especiais' em 'Amortização' e 'Juros'.
-- Remove Pareto e ajusta análises.
+- Aba 1: Gráfico de Barras (Visão Geral).
+- Aba 2: Treemap (Detalhamento Hierárquico dos Encargos).
+- Aba 3: Evolução da Dívida.
+- Aba 4: Análises (Pareto).
 """
 
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import plotly.express as px
 import unicodedata
 
@@ -54,44 +57,44 @@ def carregar_dados_gastos():
 
     df = normalizar_colunas(df)
     
-    # Mapeamento (Agora incluindo Grupo de Despesa para separar Juros/Amortização)
+    # Mapeamento expandido para incluir GRUPO DE DESPESA
     col_map = {
         'funcao': next((c for c in df.columns if 'funcao' in c and 'sub' not in c), None),
-        'grupo': next((c for c in df.columns if 'grupo' in c), None), # Nova coluna crucial
+        'grupo': next((c for c in df.columns if 'grupo' in c), None), # Nova coluna essencial para o Treemap
         'orgao': next((c for c in df.columns if 'superior' in c), None),
+        'unidade': next((c for c in df.columns if 'unidade' in c), None),
         'valor': next((c for c in df.columns if 'realizado' in c or 'pago' in c), None)
     }
     
-    # Renomeia
     df = df.rename(columns={
         col_map['funcao']: 'Funcao',
         col_map['grupo']: 'Grupo_Despesa',
-        col_map['orgao']: 'Orgao',
-        col_map['valor']: 'Valor'
+        col_map['orgao']: 'Orgao_Superior',
+        col_map['unidade']: 'Unidade_Orcamentaria',
+        col_map['valor']: 'Valor_Realizado'
     })
     
     # Limpeza numérica
-    if 'Valor' in df.columns:
-        df['Valor'] = df['Valor'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce')
+    if 'Valor_Realizado' in df.columns:
+        df['Valor_Realizado'] = df['Valor_Realizado'].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+        df['Valor_Realizado'] = pd.to_numeric(df['Valor_Realizado'], errors='coerce')
         
-        # --- LÓGICA DE CATEGORIZAÇÃO PARA O TREEMAP ---
-        # Cria uma nova coluna "Categoria" para separar a Dívida do resto
-        def classificar_gasto(row):
+        # --- Categorização para o Treemap ---
+        def classificar_divida(row):
             funcao = str(row['Funcao']).lower()
             grupo = str(row['Grupo_Despesa']).lower()
             
             if 'encargos' in funcao or 'dívida' in funcao or 'divida' in funcao:
-                # Separa o que é rolagem do que é juros
-                if 'amortização' in grupo or 'refinanciamento' in grupo or 'inversões' in grupo:
-                    return "Dívida: Amortização/Rolagem"
+                # Separa Rolagem (Amortização) de Custo (Juros)
+                if 'amortização' in grupo or 'refinanciamento' in grupo or 'inversões financeiras' in grupo:
+                    return "Dívida: Amortização/Rolagem (Principal)"
                 else:
-                    return "Dívida: Juros e Encargos"
+                    return "Dívida: Juros e Encargos (Custo)"
             return "Despesas Sociais e Administrativas"
 
-        df['Categoria_Macro'] = df.apply(classificar_gasto, axis=1)
+        df['Categoria_Macro'] = df.apply(classificar_divida, axis=1)
         
-        return df.dropna(subset=['Valor'])
+        return df.dropna(subset=['Valor_Realizado'])
     return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -113,11 +116,10 @@ def carregar_dados_divida():
         'tipo': next((c for c in df.columns if 'tipo' in c), None)
     }
     
-    df = df.rename(columns={
-        col_map['data']: 'Data', 
-        col_map['valor']: 'Valor_Estoque',
-        col_map['tipo']: 'Tipo_Divida'
-    })
+    rename_dict = {col_map['data']: 'Data', col_map['valor']: 'Valor_Estoque'}
+    if col_map['tipo']: rename_dict[col_map['tipo']] = 'Tipo_Divida'
+    
+    df = df.rename(columns=rename_dict)
     
     if 'Data' in df.columns:
         df['Data'] = df['Data'].astype(str).str.strip()
@@ -134,131 +136,146 @@ def carregar_dados_divida():
         
     return df.dropna(subset=['Valor_Estoque'])
 
-# --- 2. ANÁLISE ESTATÍSTICA ---
+# --- 2. ANÁLISE ---
 
-def gerar_insight_avancado(pergunta, df_gastos, df_divida):
+def gerar_insight_avancado(pergunta, df_gastos):
     try:
-        if "Previsão de Pagamento" in pergunta:
-            data_max = df_divida['Data'].max()
-            divida_total = df_divida[df_divida['Data'] == data_max]['Valor_Estoque'].sum()
+        if "Pareto" in pergunta:
+            df_f = df_gastos.groupby('Funcao')['Valor_Realizado'].sum().sort_values(ascending=False)
+            total = df_f.sum()
+            df_acc = df_f.cumsum()
+            df_perc = (df_acc / total) * 100
+            n_80 = df_perc[df_perc <= 80].count() + 1
+            top_1 = df_f.index[0]
+            top_1_perc = (df_f.iloc[0] / total) * 100
             
-            # Filtra apenas o que é "Juros e Encargos" ou "Amortização" para calcular o esforço fiscal
-            # Aqui consideramos o total gasto com a função Encargos
-            gasto_divida_anual = df_gastos[df_gastos['Categoria_Macro'].str.contains("Dívida")]['Valor'].sum()
-            
-            if gasto_divida_anual > 0:
-                anos = divida_total / gasto_divida_anual
-                return f"""
-### ⏳ Estimativa de Quitação
-Esta análise projeta o tempo necessário para zerar o estoque da dívida, assumindo que todo o valor hoje gasto com "Encargos Especiais" (Juros + Amortização) fosse usado efetivamente para abater o principal, e que a dívida parasse de crescer.
+            return f"""
+### 📉 Análise de Concentração (Regra de Pareto)
+- **Resultado:** Apenas **{n_80} funções** concentram **80%** de todo o orçamento realizado.
+- **Maior Foco:** A função **{top_1}** sozinha representa **{top_1_perc:.1f}%** dos gastos.
 
-- **Estoque Ampliado da Dívida:** R$ {divida_total*1e-12:.2f} Trilhões
-- **Fluxo Anual de Pagamento (Orçamento):** R$ {gasto_divida_anual*1e-12:.2f} Trilhões/ano
-
-**Resultado:** Levaria **{anos:.1f} anos** para liquidar o estoque atual.
+---
+**💡 Entenda o Conceito:**
+A Regra de Pareto (80/20) aplicada aqui demonstra a **rigidez orçamentária**: a grande maioria dos recursos está comprometida com pouquíssimas áreas (principalmente Dívida e Previdência), deixando pouco espaço para investimentos discricionários em outros setores.
 """
-            else:
-                return "Dados de gastos com dívida não encontrados."
-
-        elif "Listagem dos Gastos" in pergunta:
-            # Ranking agrupado por Função (excluindo a divisão interna da dívida para simplificar a lista)
-            df_rank = df_gastos.groupby('Funcao')['Valor'].sum().sort_values(ascending=False)
-            total = df_rank.sum()
-            res = "### 📋 Ranking de Gastos (Maior para Menor)\n"
-            for f, v in df_rank.items():
-                p = (v/total)*100
-                if p > 0.5: res += f"1. **{f}**: R$ {v*1e-9:.1f} bi ({p:.1f}%)\n"
-            return res
-
         return "Selecione..."
     except Exception as e: return f"Erro: {e}"
 
 # --- 3. INTERFACE GRÁFICA ---
 
-st.title("Análise Orçamentária do Brasil 🇧🇷")
-st.markdown("Análise hierárquica dos gastos e evolução da dívida (Dados Oficiais do Tesouro).")
+def format_bi(x, pos): return f'R$ {x*1e-9:.0f} bi'
+def format_tri(x, pos): return f'R$ {x*1e-12:.1f} T'
 
-with st.spinner("Processando dados..."):
+st.title("Análise Orçamentária do Brasil 🇧🇷")
+st.markdown("Dados oficiais do Tesouro Transparente e Portal da Transparência.")
+
+with st.spinner("Carregando..."):
     df_gastos = carregar_dados_gastos()
     df_divida = carregar_dados_divida()
 
 if not df_gastos.empty and not df_divida.empty:
     
-    tab1, tab2, tab3 = st.tabs(["📊 Mapa de Gastos (Treemap)", "📈 Dívida (Histórico)", "🧠 Análises"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Ranking de Gastos (Barras)", "🗺️ Mapa de Gastos (Treemap)", "📈 Dívida (Histórico)", "🧠 Análises"])
     
+    # ABA 1: RANKING DE GASTOS (BARRAS) - Mantida como você queria
     with tab1:
-        st.header("Distribuição do Orçamento 2025")
+        st.header("Ranking de Gastos por Função")
+        st.info("ℹ️ Visão geral dos maiores grupos de despesa.")
+        
+        col1, col2 = st.columns(2)
+        funcoes = sorted(list(df_gastos['Funcao'].unique())) if 'Funcao' in df_gastos.columns else []
+        sel = col1.selectbox("Filtrar Função (Barras):", ['Todas'] + funcoes)
+        
+        df_view = df_gastos if sel == 'Todas' else df_gastos[df_gastos['Funcao'] == sel]
+        group = 'Funcao' if sel == 'Todas' else 'Unidade_Orcamentaria'
+        title = "Top 10 Funções" if sel == 'Todas' else f"Top 10 Unidades em {sel}"
+        
+        top = df_view.groupby(group)['Valor_Realizado'].sum().nlargest(10).sort_values(ascending=True)
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.barh(top.index, top.values, color='#0072B2')
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_bi))
+        ax.grid(axis='x', alpha=0.3)
+        ax.set_title(title)
+        st.pyplot(fig)
+        
+        with st.expander("Ver Dados Detalhados"): st.dataframe(df_view)
+
+    # ABA 2: MAPA DE GASTOS (TREEMAP) - Nova Visualização Hierárquica
+    with tab2:
+        st.header("Mapa Hierárquico de Gastos (Treemap)")
         st.info("""
-        🟦 **Área Azul:** Despesas com serviços à sociedade (Saúde, Educação, etc).
-        🟥/🟧 **Área Quente:** Despesas Financeiras (Dívida).
-        Note a distinção entre **Amortização** (Rolagem/Refinanciamento) e **Juros** (Custo efetivo).
+        Este gráfico permite visualizar a **composição interna** dos grandes grupos.
+        Destaque para a separação dentro dos Encargos Especiais:
+        - 🟥 **Amortização/Rolagem:** Pagamento do principal da dívida (refinanciamento).
+        - 🟧 **Juros:** Custo efetivo da dívida.
+        - 🟦 **Despesas Sociais:** Demais áreas do governo.
         """)
         
-        # PREPARAÇÃO PARA O TREEMAP
-        # Agrupa por Categoria Macro -> Função para criar a hierarquia
-        df_treemap = df_gastos.groupby(['Categoria_Macro', 'Funcao'])['Valor'].sum().reset_index()
-        
-        # Criação do Treemap
-        fig = px.treemap(
-            df_treemap, 
-            path=['Categoria_Macro', 'Funcao'], 
-            values='Valor',
-            color='Categoria_Macro',
-            color_discrete_map={
-                'Despesas Sociais e Administrativas': '#2E86C1', # Azul
-                'Dívida: Amortização/Rolagem': '#E74C3C',       # Vermelho
-                'Dívida: Juros e Encargos': '#F39C12'           # Laranja
-            },
-            title="Hierarquia dos Gastos Públicos"
-        )
-        # Ajusta o layout para mostrar o valor em Bilhões no mouseover
-        fig.update_traces(textinfo="label+percent entry", hovertemplate='<b>%{label}</b><br>Valor: R$ %{value:,.2f}')
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        with st.expander("Ver dados em Tabela"):
-            st.dataframe(df_treemap.sort_values(by='Valor', ascending=False))
+        # Prepara dados para o Treemap
+        # Agrupa por Categoria Macro (Dívida vs Social) -> Função -> Grupo de Despesa (opcional, para detalhe)
+        if 'Grupo_Despesa' in df_gastos.columns:
+            df_tree = df_gastos.groupby(['Categoria_Macro', 'Funcao'])['Valor_Realizado'].sum().reset_index()
+            
+            fig_tree = px.treemap(
+                df_tree,
+                path=['Categoria_Macro', 'Funcao'],
+                values='Valor_Realizado',
+                color='Categoria_Macro',
+                color_discrete_map={
+                    'Despesas Sociais e Administrativas': '#2E86C1',
+                    'Dívida: Amortização/Rolagem (Principal)': '#C0392B',
+                    'Dívida: Juros e Encargos (Custo)': '#F39C12'
+                },
+                title="Distribuição do Orçamento: Dívida vs. Sociedade"
+            )
+            # Formatação do tooltip
+            fig_tree.update_traces(
+                textinfo="label+percent entry",
+                hovertemplate='<b>%{label}</b><br>Valor: R$ %{value:,.2f}'
+            )
+            
+            st.plotly_chart(fig_tree, use_container_width=True)
+        else:
+            st.error("Coluna 'Grupo de Despesa' não encontrada para gerar o Treemap detalhado.")
 
-    with tab2:
+    # ABA 3: DÍVIDA (HISTÓRICO) - Mantida
+    with tab3:
         st.header("Evolução da Dívida Pública")
-        st.warning("⚠️ **Nota:** Valores referentes ao conceito de **Dívida Bruta/Ampliada** (~R$ 11 Tri), abrangendo operações compromissadas e títulos em carteira do BC, diferindo da DPF de mercado (~R$ 7 Tri).")
+        st.warning("⚠️ **Nota Metodológica:** Valores referentes ao conceito de **Dívida Bruta/Ampliada** (~R$ 11 Tri), abrangendo operações compromissadas e títulos em carteira do BC.")
         
         if 'Data' in df_divida.columns:
             df_divida = df_divida.sort_values(by='Data')
-            
-            # Filtra para somar componentes (Interna + Externa)
+            # Filtra Total para somar componentes
             if 'Tipo_Divida' in df_divida.columns:
                  df_divida_clean = df_divida[~df_divida['Tipo_Divida'].astype(str).str.contains("Total", case=False, na=False)]
             else:
                  df_divida_clean = df_divida
 
-            # Agrupa por data
             df_linha = df_divida_clean.groupby('Data')['Valor_Estoque'].sum()
             
-            # Gráfico de área para mostrar volume
-            fig2 = px.area(
+            # Gráfico de área interativo com Plotly (mais moderno que matplotlib para séries temporais)
+            fig_area = px.area(
                 x=df_linha.index, 
                 y=df_linha.values,
                 labels={'x': 'Ano', 'y': 'Estoque (R$)'},
                 title="Crescimento do Estoque Total (Ampliado)"
             )
-            fig2.update_layout(yaxis_tickformat=".2s") # Formatação simplificada
-            
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig_area, use_container_width=True)
             
             ult = df_linha.iloc[-1]
-            st.metric("Estoque Atual (Ampliado)", f"R$ {ult*1e-12:.2f} Trilhões")
+            st.metric(f"Estoque Atual", f"R$ {ult*1e-12:.2f} Trilhões")
+        else:
+            st.error("Erro na coluna de Data.")
 
-    with tab3:
+    # ABA 4: ANÁLISES (PARETO) - Focada
+    with tab4:
         st.header("Inteligência")
-        op = st.selectbox("Análise:", [
-            "Selecione...", 
-            "⏳ Previsão de Pagamento (Cenário Estável)", 
-            "📋 Listagem dos Gastos (Ranking)"
-        ])
+        op = st.selectbox("Análise:", ["Selecione...", "📉 Análise de Concentração (Regra de Pareto)"])
         if op != "Selecione...":
             st.markdown("---")
-            st.markdown(gerar_insight_avancado(op, df_gastos, df_divida))
+            st.markdown(gerar_insight_avancado(op, df_gastos))
 
 else:
-    st.error("Erro crítico: Verifique arquivos CSV no GitHub.")
+    st.error("Erro: Arquivos CSV não carregados.")
+
